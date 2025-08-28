@@ -2,13 +2,10 @@
 /**
  * Exam/Test Help → Topic Practice (Text-only)
  * GOAT Bot 2.0
- * Updated: 2025-08-28 15:58:00 UTC
+ * Updated: 2025-08-28 16:05:00 UTC
  * Developer: DithetoMokgabudi
  *
- * Purpose:
- * - Remove image requirement. Flow is Subject + Grade → Topic → Sub-topic → Questions.
- * - Progressive difficulty with manual nudge (Harder/Easier).
- * - Keep routing, analytics, and ManyChat compatibility intact.
+ * Change: Enhance topic list formatting with consistent emojis and numeric emojis.
  */
 
 const {
@@ -54,6 +51,45 @@ function labelize(key) {
     .split("_")
     .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
     .join(" ");
+}
+
+// NEW: Emoji helpers for numbered menus
+function numberToEmoji(n) {
+  const map = {
+    1: "1️⃣",
+    2: "2️⃣",
+    3: "3️⃣",
+    4: "4️⃣",
+    5: "5️⃣",
+    6: "6️⃣",
+    7: "7️⃣",
+    8: "8️⃣",
+    9: "9️⃣",
+    10: "🔟",
+  };
+  return map[n] || `#${n}`;
+}
+
+function pickTopicEmoji(topicLabel = "") {
+  const t = topicLabel.toLowerCase();
+  if (/(algebra|equation|expression|sequence|series|function|graph)/.test(t))
+    return "🧮";
+  if (/(trig|triangle|geometry|circle|angle|pythag)/.test(t)) return "📐";
+  if (/(probab|stat|data|venn|mean|median|mode|deviation)/.test(t)) return "📊";
+  if (/(map|gis|scale|contour|climate|geomorph|settlement|development)/.test(t))
+    return "🗺️";
+  if (/(mechanics|force|velocity|acceleration|circuit|ohm|electric)/.test(t))
+    return "🔬";
+  if (/(cell|dna|meiosis|mitosis|ecosystem|homeostasis)/.test(t)) return "🧬";
+  if (/(finance|budget|interest|vat|tax|account)/.test(t)) return "💸";
+  if (/(history|apartheid|cold war|nationalism)/.test(t)) return "📜";
+  return "📘";
+}
+
+function formatEmojiNumberedList(items) {
+  return items
+    .map((t, i) => `${numberToEmoji(i + 1)} ${pickTopicEmoji(t)} ${t}`)
+    .join("\n");
 }
 
 // Progressive difficulty tiers
@@ -204,7 +240,7 @@ async function ensureQuestion(user, regenerate = false) {
         m.subtopic || m.topic
       }\n\nSolve: 2x + 5 = 15`,
       solution:
-        "**Step 1:** 2x = 10\n**Step 2:** x = 5\n**Mastery Check:** Try 3x + 7 = 22.",
+        "*Step 1:* 2x = 10\n*Step 2:* x = 5\n*Mastery Check:* Try 3x + 7 = 22.",
       source: "fallback",
       contentId: `fb_${Date.now()}`,
     };
@@ -234,7 +270,7 @@ async function screenStart(user) {
     current_question: null,
   };
   const content =
-    `📝 **Topic Practice (no images)**\nUnlimited practice to master any topic.\n\n` +
+    `📝 *Topic Practice (no images)*\nUnlimited practice to master any topic.\n\n` +
     `What subject and grade?\nExamples: "Mathematics 10", "Physical Sciences 11", "Geography 9"`;
   const menu = `Reply: Subject + Grade (e.g., "Mathematics 10")`;
   return formatResponseWithEnhancedSeparation(
@@ -269,7 +305,7 @@ async function handleSubjectGrade(user, text) {
         '"Waves"',
       ],
     }[subject] || ['"Topic 1"', '"Topic 2"'];
-    const content = `Got it: **${subject} Grade ${grade}**\n\nWhat topic would you like to practice?\nExamples: ${examples.join(
+    const content = `Got it: *${subject} Grade ${grade}*\n\nWhat topic would you like to practice?\nExamples: ${examples.join(
       ", "
     )}`;
     return formatResponseWithEnhancedSeparation(
@@ -281,8 +317,12 @@ async function handleSubjectGrade(user, text) {
 
   m._topics = topics;
   m.stage = "topic_select";
-  const list = formatNumbered(topics.map((t) => labelize(t)));
-  const content = `Perfect: **${subject} Grade ${grade}**\n\n**Choose a topic to master:**\n\n${list}\n\nPick a number to start practicing.`;
+
+  // Enhanced list with emojis
+  const prettyTopics = topics.map((t) => labelize(t));
+  const list = formatEmojiNumberedList(prettyTopics);
+
+  const content = `Perfect: *${subject} Grade ${grade}*\n\n*Choose a topic to master:*\n\n${list}\n\nPick a number to start practicing.`;
   return formatResponseWithEnhancedSeparation(
     content,
     `Reply with a number (1-${topics.length})`,
@@ -317,8 +357,13 @@ async function handleTopicSelect(user, text) {
 
   m._subtopics = subs;
   m.stage = "subtopic_select";
-  const list = formatNumbered(subs);
-  const content = `Nice. ${m.topic}.\n\nPick a sub-topic:\n\n${list}`;
+
+  // Optional: emoji list for subtopics (uniform icon for clarity)
+  const subList = subs
+    .map((s, i) => `${numberToEmoji(i + 1)} 🧩 ${s}`)
+    .join("\n");
+
+  const content = `Nice. ${m.topic}.\n\nPick a sub-topic:\n\n${subList}`;
   return formatResponseWithEnhancedSeparation(
     content,
     `Reply with a number (e.g., 1)`,
@@ -348,8 +393,12 @@ async function handleTopicFree(user, text) {
 
   m._subtopics = subs;
   m.stage = "subtopic_select";
-  const list = formatNumbered(subs);
-  const content = `Nice. ${m.topic}.\n\nPick a sub-topic:\n\n${list}`;
+
+  const subList = subs
+    .map((s, i) => `${numberToEmoji(i + 1)} 🧩 ${s}`)
+    .join("\n");
+
+  const content = `Nice. ${m.topic}.\n\nPick a sub-topic:\n\n${subList}`;
   return formatResponseWithEnhancedSeparation(
     content,
     `Reply with a number (e.g., 1)`,
@@ -384,9 +433,9 @@ async function handleLoop(user, text) {
   if (wantsExit(t)) {
     user.current_menu = "welcome";
     user.context = {};
-    return `**Welcome to The GOAT.** I'm here help you study with calm and clarity.
+    return `*Welcome to The GOAT.* I'm here help you study with calm and clarity.
 
-**What do you need right now?**
+*What do you need right now?*
 
 1️⃣ 📅 Exam/Test Help
 2️⃣ 📚 Homework Help 🫶 ⚡  
@@ -399,7 +448,10 @@ Just pick a number! ✨`;
     const topics = listTopics(m.subject);
     m._topics = topics;
     m.stage = "topic_select";
-    const list = formatNumbered(topics.map((x) => labelize(x)));
+
+    const prettyTopics = topics.map((x) => labelize(x));
+    const list = formatEmojiNumberedList(prettyTopics);
+
     const content = `Okay, pick a CAPS-aligned topic:\n\n${list}`;
     return formatResponseWithEnhancedSeparation(
       content,
@@ -422,7 +474,7 @@ Just pick a number! ✨`;
     const q = m.current_question;
     if (!q) return await ensureQuestion(user, false);
     updateProgression(m, "solution");
-    const content = `${header(user)}\n\n🧩 **Solution (steps):**\n\n${
+    const content = `${header(user)}\n\n🧩 *Solution (steps):*\n\n${
       q.solution || "Solution available after attempt."
     }`;
     return formatResponseWithEnhancedSeparation(
@@ -437,7 +489,7 @@ Just pick a number! ✨`;
     if (!q) return await ensureQuestion(user, false);
     updateProgression(m, "hint");
     const hint = firstHint(q.solution);
-    const content = `${header(user)}\n\n💡 **Hint:** ${hint}`;
+    const content = `${header(user)}\n\n💡 *Hint:* ${hint}`;
     return formatResponseWithEnhancedSeparation(
       content,
       MENU,
@@ -469,7 +521,6 @@ module.exports = async (req, res) => {
     const message = (req.body.message || req.body.user_input || "").trim();
     const userAgent = req.headers["user-agent"] || "";
 
-    // Load/prepare user
     let user = await getOrCreateUserState(subscriberId);
     user.preferences = user.preferences || {};
     if (!user.preferences.device_type) {
@@ -518,10 +569,8 @@ module.exports = async (req, res) => {
       timestamp: new Date().toISOString(),
     });
 
-    // Save state (debounced)
     persistUserState(subscriberId, user).catch(() => {});
 
-    // Minimal analytics
     analyticsModule
       .trackEvent(subscriberId, "exam_topic_practice", {
         stage: user.context.examTopicPractice?.stage || "unknown",

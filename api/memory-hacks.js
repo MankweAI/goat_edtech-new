@@ -72,17 +72,17 @@ module.exports = async (req, res) => {
 async function handleMemoryHacksFlow(user, text) {
   const subject = text.trim() || "Mathematics";
 
-  const content = `🧠 **Memory Hack** ✨
+  const content = `🧠 *Memory Hack* ✨
 
-**SA Memory Trick for ${subject}**
+*SA Memory Trick for ${subject}*
 
 💡 Using local landmarks and culture to remember key concepts:
 
-1️⃣ **Table Mountain Method:** Visualize a problem at the top of Table Mountain to see it from all angles
+1️⃣ *Table Mountain Method:* Visualize a problem at the top of Table Mountain to see it from all angles
 
-2️⃣ **Veld Connection:** Link concepts to different areas of the South African veld
+2️⃣ *Veld Connection:* Link concepts to different areas of the South African veld
 
-3️⃣ **Ubuntu Learning:** Apply the "I am because we are" principle to understand how concepts relate to each other`;
+3️⃣ *Ubuntu Learning:* Apply the "I am because we are" principle to understand how concepts relate to each other`;
 
   const menu = `1️⃣ ➡️ More Hacks
 2️⃣ 📝 Practice Questions

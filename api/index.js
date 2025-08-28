@@ -223,12 +223,12 @@ async function showWelcomeMenu(user, subscriberId) {
   user.context = {};
 
   const welcomeBack = user.preferences.last_subject
-    ? `\n\n👋 **Welcome back!** Ready to master more *${user.preferences.last_subject}*?`
+    ? `\n\n👋 Welcome back!* Ready to master more *${user.preferences.last_subject}*?`
     : "";
 
-  return `**Welcome to The GOAT.** I'm here help you study with calm and clarity.${welcomeBack}
+  return `*Welcome to The GOAT.* I'm here help you study with calm and clarity.${welcomeBack}
 
-**What do you need right now?**
+*What do you need right now?*
 
 1️⃣ 📝 Topic Practice Questions
 2️⃣ 📚 Homework Help 🫶 ⚡  
