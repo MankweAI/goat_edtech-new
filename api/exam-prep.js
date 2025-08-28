@@ -16,6 +16,14 @@ const trackManyState = stateModule.trackManyState;
 const { persistUserState, getOrCreateUserState } = stateModule;
 const { ManyCompatResponse } = require("../lib/core/responses");
 const { extractImageData } = require("../lib/core/commands");
+const { detectDeviceType } = require("../lib/utils/device-detection");
+const analyticsModule = require("../lib/utils/analytics");
+
+// New text-only Topic Practice flow
+const {
+  startTopicPractice,
+  processTopicPractice,
+} = require("../lib/features/exam-prep/topic-practice");
 
 // Safe require utility to avoid hard crashes when a file is missing in the bundle
 function safeRequire(path, fallbackFactory) {
@@ -77,161 +85,6 @@ const foundationDetector = new FoundationGapDetector();
 const solutionAnalyzer = new SolutionAnalyzer();
 const adaptiveDifficulty = new AdaptiveDifficulty();
 
-module.exports = async (req, res) => {
-  try {
-    const manyCompatRes = new ManyCompatResponse(res);
-    const subscriberId =
-      req.body.psid || req.body.subscriber_id || "default_user";
-    const message = req.body.message || req.body.user_input || "";
-    const userAgent = req.headers["user-agent"] || "";
-
-    let user = await getOrCreateUserState(subscriberId);
-    if (!user.preferences.device_type) {
-      user.preferences.device_type = detectDeviceType(userAgent);
-    }
-    if (!user.current_menu || user.current_menu === "welcome") {
-      user.current_menu = "exam_prep_conversation";
-    }
-    user.context = user.context || {};
-    trackManyState(subscriberId, {
-      type: "exam_prep_conversation",
-      current_menu: "exam_prep_conversation",
-    });
-
-    const imageInfo = extractImageData(req);
-
-    // Interactive mode takes precedence (solution analysis or commands)
-    if (user.context?.interactiveMode && user.context?.currentQuestion) {
-      let response;
-      if (
-        imageInfo &&
-        (imageInfo.type === "direct" || imageInfo.type === "url")
-      ) {
-        response = await handleSolutionUpload(user, imageInfo);
-      } else if ((message || "").trim()) {
-        response = await handleInteractiveMode(user, message);
-      } else {
-        response =
-          "I'm ready when you are. Upload your working photo, or reply 1 (Hint), 2 (Different problem), 3 (Main Menu).";
-      }
-
-      user.conversation_history = user.conversation_history || [];
-      user.conversation_history.push({
-        role: "assistant",
-        message: response,
-        timestamp: new Date().toISOString(),
-      });
-      userStates.set(subscriberId, user);
-      persistUserState(subscriberId, user).catch(console.error);
-
-      return manyCompatRes.json({
-        message: response,
-        status: "success",
-        debug_state: { menu: user.current_menu, mode: "interactive" },
-      });
-    }
-
-    // Painpoint confirmation gate
-    if (user.context?.painpointConfirm?.awaiting) {
-      const response = await handlePainpointConfirmation(user, message);
-
-      user.conversation_history = user.conversation_history || [];
-      user.conversation_history.push({
-        role: "assistant",
-        message: response,
-        timestamp: new Date().toISOString(),
-      });
-      userStates.set(subscriberId, user);
-      persistUserState(subscriberId, user).catch(console.error);
-
-      return manyCompatRes.json({
-        message: response,
-        status: "success",
-        debug_state: {
-          menu: user.current_menu,
-          mode: user.context?.interactiveMode
-            ? "interactive"
-            : "awaiting_painpoint_confirmation",
-        },
-      });
-    }
-
-    // First-time image intelligence
-    if (
-      imageInfo &&
-      (imageInfo.type === "direct" || imageInfo.type === "url")
-    ) {
-      // If URL, download to base64 for OCR reliability
-      let normalizedImageData = imageInfo.data;
-      if (imageInfo.type === "url") {
-        try {
-          normalizedImageData = await downloadImageAsBase64(imageInfo.data);
-        } catch (e) {
-          console.error("Image URL download failed:", e.message);
-          const response =
-            "📸 I couldn't fetch the image from the link. Please resend a clearer photo.";
-          return manyCompatRes.json({
-            message: response,
-            status: "error",
-            echo: response,
-          });
-        }
-      }
-
-      const response = await handleImageIntelligence(user, {
-        type: "direct",
-        data: normalizedImageData,
-      });
-
-      user.conversation_history = user.conversation_history || [];
-      user.conversation_history.push({
-        role: "assistant",
-        message: response,
-        timestamp: new Date().toISOString(),
-      });
-
-      userStates.set(subscriberId, user);
-      persistUserState(subscriberId, user).catch(console.error);
-
-      return manyCompatRes.json({
-        message: response,
-        status: "success",
-        debug_state: {
-          menu: user.current_menu,
-          mode: user.context?.painpointConfirm?.awaiting
-            ? "awaiting_painpoint_confirmation"
-            : "image_intelligence",
-        },
-      });
-    }
-
-    // Otherwise, prompt for image
-    const response = generateImageUploadPrompt(user);
-    user.conversation_history = user.conversation_history || [];
-    user.conversation_history.push({
-      role: "assistant",
-      message: response,
-      timestamp: new Date().toISOString(),
-    });
-    userStates.set(subscriberId, user);
-    persistUserState(subscriberId, user).catch(console.error);
-
-    return manyCompatRes.json({
-      message: response,
-      status: "success",
-      debug_state: { menu: user.current_menu, mode: "awaiting_image" },
-    });
-  } catch (error) {
-    console.error("Exam prep error:", error);
-    return res.json({
-      message:
-        "Sorry, I encountered an error with exam prep. Please try again.",
-      status: "error",
-      echo: "Sorry, I encountered an error with exam prep. Please try again.",
-      error: error.message,
-    });
-  }
-};
 
 // Handle image intelligence → concise report → ask for painpoint confirmation
 async function handleImageIntelligence(user, imageInfo) {
@@ -615,3 +468,81 @@ function generateImageProcessingError() {
 function generateFallbackImageResponse() {
   return `📸 I saw an image but couldn’t extract the problem. Please upload a clearer photo of a specific question you’re stuck on.`;
 }
+
+module.exports = async (req, res) => {
+  try {
+    const manyCompatRes = new ManyCompatResponse(res);
+    const subscriberId =
+      req.body.psid || req.body.subscriber_id || "default_user";
+    const message = (req.body.message || req.body.user_input || "").trim();
+    const userAgent = req.headers["user-agent"] || "";
+
+    let user = await getOrCreateUserState(subscriberId);
+    if (!user.preferences.device_type) {
+      user.preferences.device_type = detectDeviceType(userAgent);
+    }
+    if (!user.current_menu || user.current_menu === "welcome") {
+      user.current_menu = "exam_prep_conversation";
+    }
+    user.context = user.context || {};
+    trackManyState(subscriberId, {
+      type: "exam_prep_conversation",
+      current_menu: "exam_prep_conversation",
+    });
+
+    // Text-first: ignore images for this feature
+    const inTopicPractice = Boolean(user.context.topicPractice?.active);
+    let response;
+
+    if (!inTopicPractice) {
+      response = await startTopicPractice(user);
+      user.context.topicPractice.active = true;
+    } else {
+      response = await processTopicPractice(user, message);
+    }
+
+    // Append assistant response
+    user.conversation_history = user.conversation_history || [];
+    if (message) {
+      user.conversation_history.push({
+        role: "user",
+        message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    user.conversation_history.push({
+      role: "assistant",
+      message: response,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Persist state
+    userStates.set(subscriberId, user);
+    persistUserState(subscriberId, user).catch(() => {});
+
+    analyticsModule
+      .trackEvent(subscriberId, "exam_topic_practice_interaction", {
+        feature: "exam_prep_topic_practice",
+        stage: user.context.topicPractice?.stage || "unknown",
+      })
+      .catch(() => {});
+
+    return manyCompatRes.json({
+      message: response,
+      status: "success",
+      debug_state: {
+        menu: user.current_menu,
+        stage: user.context.topicPractice?.stage || "unknown",
+      },
+    });
+  } catch (error) {
+    console.error("Exam/Test (topic practice) error:", error);
+    return res.json({
+      message:
+        "Sorry, I encountered an error with Topic Practice. Please try again.",
+      status: "error",
+      echo: "Sorry, I encountered an error with Topic Practice. Please try again.",
+      error: error.message,
+    });
+  }
+};
