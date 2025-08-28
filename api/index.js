@@ -28,46 +28,7 @@ networkResilience.startRetryScheduler({
   stateModule,
 });
 
-module.exports = async (req, res) => {
-  const start = Date.now();
-  console.log(
-    `📩 ${req.method} request to ${
-      req.url || "/api/index"
-    } | ${new Date().toISOString()}`
-  );
 
-  try {
-    const query = req.query || {};
-    const endpoint = query.endpoint || "webhook";
-
-    switch (endpoint) {
-      case "webhook":
-        return await handleWebhook(req, res, start);
-      case "mock-exam":
-        return await examPrep(req, res);
-      case "homework-ocr":
-        return await homeworkHelp(req, res);
-      case "memory-hacks":
-        return await memoryHacks(req, res);
-      default:
-        return await handleWebhook(req, res, start);
-    }
-  } catch (error) {
-    console.error("❌ GOAT Bot fatal error:", error);
-    if (!res.headersSent) {
-      return res.status(500).json(
-        formatGoatResponse(
-          "Sorry, I encountered an error. Please try typing 'menu' to restart! 🔄",
-          {
-            status: "error",
-            error: error.message,
-            elapsed_ms: Date.now() - start,
-          }
-        )
-      );
-    }
-  }
-};
 
 async function handleWebhook(req, res, start) {
   if (req.method === "GET") {
@@ -262,17 +223,57 @@ async function showWelcomeMenu(user, subscriberId) {
   user.context = {};
 
   const welcomeBack = user.preferences.last_subject
-    ? `\n\n👋 **Welcome back!** Ready to continue with *${user.preferences.last_subject}*?`
+    ? `\n\n👋 **Welcome back!** Ready to master more *${user.preferences.last_subject}*?`
     : "";
 
-  // Renamed menu item to “Exam/Test Questions”
   return `**Welcome to The GOAT.** I'm here help you study with calm and clarity.${welcomeBack}
 
 **What do you need right now?**
 
-1️⃣ 📝 Exam/Test Questions
+1️⃣ 📝 Topic Practice Questions
 2️⃣ 📚 Homework Help 🫶 ⚡  
 3️⃣ 🧮 Tips & Hacks
 
 Just pick a number! ✨`;
 }
+
+module.exports = async (req, res) => {
+  const start = Date.now();
+  console.log(
+    `📩 ${req.method} request to ${
+      req.url || "/api/index"
+    } | ${new Date().toISOString()}`
+  );
+
+  try {
+    const query = req.query || {};
+    const endpoint = query.endpoint || "webhook";
+
+    switch (endpoint) {
+      case "webhook":
+        return await handleWebhook(req, res, start);
+      case "mock-exam":
+        return await examPrep(req, res);
+      case "homework-ocr":
+        return await homeworkHelp(req, res);
+      case "memory-hacks":
+        return await memoryHacks(req, res);
+      default:
+        return await handleWebhook(req, res, start);
+    }
+  } catch (error) {
+    console.error("❌ GOAT Bot fatal error:", error);
+    if (!res.headersSent) {
+      return res.status(500).json(
+        formatGoatResponse(
+          "Sorry, I encountered an error. Please try typing 'menu' to restart! 🔄",
+          {
+            status: "error",
+            error: error.message,
+            elapsed_ms: Date.now() - start,
+          }
+        )
+      );
+    }
+  }
+};
