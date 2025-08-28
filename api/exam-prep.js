@@ -8,34 +8,14 @@
 
 const stateModule = require("../lib/core/state");
 const userStates = stateModule.userStates;
-const trackManyState = stateModule.trackManyState;
-const {
-  persistUserState,
-  retrieveUserState,
-  getOrCreateUserState,
-  trackAnalytics,
-  AI_INTEL_STATES, // CRITICAL FIX: Added missing import
-} = stateModule;
+const { persistUserState, getOrCreateUserState, AI_INTEL_STATES } = stateModule;
 const { ManyCompatResponse } = require("../lib/core/responses");
-const {
-  startAIIntelligenceGathering,
-  processUserResponse,
-} = require("../lib/features/exam-prep/intelligence");
-const {
-  generateExamQuestions,
-} = require("../lib/features/exam-prep/questions");
-const {
-  formatResponseWithEnhancedSeparation,
-} = require("../lib/utils/formatting");
+const analyticsModule = require("../lib/utils/analytics");
 const { detectDeviceType } = require("../lib/utils/device-detection");
 const {
-  sendImageViaManyChat,
-  formatWithLatexImage,
-} = require("../lib/utils/whatsapp-image");
-const analyticsModule = require("../lib/utils/analytics");
-const {
-  generatePersonalizedFeedback,
-} = require("../lib/features/exam-prep/personalization");
+  startAIQuestionsMode,
+  processQuestionsFlow,
+} = require("../lib/features/exam-prep/intelligence");
 
 // Update the main module.exports function
 module.exports = async (req, res) => {
@@ -43,71 +23,19 @@ module.exports = async (req, res) => {
     const manyCompatRes = new ManyCompatResponse(res);
     const subscriberId =
       req.body.psid || req.body.subscriber_id || "default_user";
-    const message = req.body.message || req.body.user_input || "";
+    const message = (req.body.message || req.body.user_input || "").trim();
     const userAgent = req.headers["user-agent"] || "";
-    const sessionId = req.body.session_id || `sess_${Date.now()}`;
-
-    // DEBUG: Log the incoming message and existing state
-    console.log(
-      `🔍 DEBUG - Exam-prep request from ${subscriberId}: "${message}"`
-    );
-    const existingState = userStates.get(subscriberId);
-    console.log(
-      `🔍 DEBUG - Existing state menu: ${existingState?.current_menu || "none"}`
-    );
-    console.log(
-      `🔍 DEBUG - Existing AI state: ${
-        existingState?.context?.ai_intel_state || "none"
-      }`
-    );
-
     const entryTimestamp = Date.now();
-    console.log(
-      `📝 Exam prep request from ${subscriberId}: "${message?.substring(
-        0,
-        50
-      )}${message?.length > 50 ? "..." : ""}"`
-    );
 
-    // Retrieve user state with persistence
     let user = await getOrCreateUserState(subscriberId);
-
-    // NOW that user is initialized, we can log the updated state
-    console.log(`🔍 DEBUG - Updated state menu: ${user.current_menu}`);
-    console.log(`🔍 DEBUG - Updated AI state: ${user.context?.ai_intel_state}`);
-
-    // Update device detection if not already set
     if (!user.preferences.device_type) {
       user.preferences.device_type = detectDeviceType(userAgent);
     }
-
-    // Set default menu if not already in exam prep
     if (!user.current_menu || user.current_menu === "welcome") {
       user.current_menu = "exam_prep_conversation";
     }
 
-    // Track menu position on entry
-    trackManyState(subscriberId, {
-      type: "exam_prep_conversation",
-      current_menu: "exam_prep_conversation",
-    });
-
-    // NEW: More comprehensive analytics tracking
-    analyticsModule
-      .trackEvent(subscriberId, "exam_prep_interaction", {
-        message_length: message?.length || 0,
-        session_id: sessionId,
-        device_type: user.preferences.device_type,
-        entry_state: user.context?.ai_intel_state || "initial",
-        had_context: Boolean(user.context?.painpoint_profile),
-      })
-      .catch((err) => console.error("Analytics error:", err));
-
-    if (req.query.endpoint === "mock-exam") {
-      return await handleMockExamGeneration(req, manyCompatRes);
-    }
-
-    // Store incoming message in conversation history
+    // Conversation history (short)
     if (message) {
       user.conversation_history = user.conversation_history || [];
       user.conversation_history.push({
@@ -115,135 +43,42 @@ module.exports = async (req, res) => {
         message,
         timestamp: new Date().toISOString(),
       });
-
-      // Limit history size
       if (user.conversation_history.length > 20) {
         user.conversation_history = user.conversation_history.slice(-20);
       }
     }
 
-    // Handle user response based on current state
     let response;
-    if (user.context?.ai_intel_state) {
-      // Run FSM first
-      response = await processUserResponse(user, message);
-
-      // POST-FSM: Generate an immediate fallback question in the SAME request if we're in IMMEDIATE_FALLBACK
-      const txt = (message || "").trim().toLowerCase();
-      const isMenuCommand =
-        txt === "1" ||
-        txt === "2" ||
-        txt === "3" ||
-        txt === "4" ||
-        txt === "solution" ||
-        txt === "next" ||
-        txt === "switch" ||
-        txt === "menu";
-
-      if (
-        user.context?.ai_intel_state === AI_INTEL_STATES.IMMEDIATE_FALLBACK &&
-        !isMenuCommand
-      ) {
-        // Generate fallback question immediately
-        const fallbackQuestion = generateFallbackQuestion(
-          user.context.failureType,
-          user.context.subjectArea
-        );
-
-        user.context.ai_intel_state = AI_INTEL_STATES.GUIDED_DISCOVERY;
-        user.context.current_question = fallbackQuestion;
-
-        // Replace response with the actual question
-        response = `**Practice Question for ${user.context.painpoint_profile.topic_struggles}**
-📊 **Targeted to your specific challenge**
-
-${fallbackQuestion.questionText}
-
-─────────────────────────────────
-
-1️⃣ 📚 View Solution
-2️⃣ ➡️ Try Another Question  
-3️⃣ 🔄 Switch Topics
-4️⃣ 🏠 Main Menu`;
-      }
-
-      // Track question generation if reached that state
-      if (user.context.ai_intel_state === "ai_question_generation") {
-        analyticsModule
-          .trackEvent(subscriberId, "exam_question_generated", {
-            subject: user.context.painpoint_profile?.subject,
-            grade: user.context.painpoint_profile?.grade,
-            topic: user.context.painpoint_profile?.topic_struggles,
-            painpoint: user.context.painpoint_profile?.specific_failure,
-            elapsed_ms: Date.now() - entryTimestamp,
-          })
-          .catch((err) => console.error("Analytics error:", err));
-
-        // NEW: Track the specific question content
-        if (user.context.current_question?.contentId) {
-          analyticsModule
-            .trackEvent(subscriberId, "content_shown", {
-              content_id: user.context.current_question.contentId,
-              subject: user.context.painpoint_profile?.subject,
-              content_type: "exam_question",
-              has_latex: Boolean(user.context.current_question.hasLatex),
-            })
-            .catch((err) => console.error("Analytics error:", err));
-        }
-      }
-
-      // Track solution viewing
-      if (txt === "1" || txt === "solution") {
-        analyticsModule
-          .trackEvent(subscriberId, "solution_viewed", {
-            subject: user.context.painpoint_profile?.subject,
-            topic: user.context.painpoint_profile?.topic_struggles,
-            content_id: user.context.current_question?.contentId,
-          })
-          .catch((err) => console.error("Analytics error:", err));
-      }
-    } else {
-      // Initial entry point - start intelligence gathering
-      response = await startAIIntelligenceGathering(user);
-
-      // Track conversation start
+    // Start “Exam/Test Questions” mode
+    if (!user.context?.ai_intel_state) {
+      response = await startAIQuestionsMode(user);
       analyticsModule
-        .trackEvent(subscriberId, "exam_prep_started", {
-          session_id: sessionId,
-          entry_type: "new_session",
+        .trackEvent(subscriberId, "exam_questions_mode_started", {
+          mode: "text_only",
         })
-        .catch((err) => console.error("Analytics error:", err));
+        .catch(() => {});
+    } else {
+      response = await processQuestionsFlow(user, message);
     }
 
-    // Store bot response in conversation history
+    // Append assistant response
+    user.conversation_history = user.conversation_history || [];
     user.conversation_history.push({
       role: "assistant",
       message: response,
       timestamp: new Date().toISOString(),
     });
 
-    // Update user state in memory
+    // Persist
     userStates.set(subscriberId, user);
+    persistUserState(subscriberId, user).catch(() => {});
 
-    // Persist user state to database (don't await - fire and forget)
-    persistUserState(subscriberId, user).catch((err) => {
-      console.error(`❌ State persistence error for ${subscriberId}:`, err);
-    });
-
-    // Only ask for rating when there's an actual question shown
-    if (user.context?.current_question && Math.random() < 0.2) {
-      response +=
-        "\n\n**Was this question helpful for your exam prep? Rate 1-5**";
-    }
-
-    // NEW: Track API response time
     analyticsModule
-      .trackEvent(subscriberId, "api_performance", {
-        endpoint: "exam_prep",
+      .trackEvent(subscriberId, "exam_prep_interaction", {
+        ai_state: user.context?.ai_intel_state,
         response_time_ms: Date.now() - entryTimestamp,
-        message_length: response?.length || 0,
       })
-      .catch((err) => console.error("Analytics error:", err));
+      .catch(() => {});
 
     return manyCompatRes.json({
       message: response,
@@ -254,12 +89,12 @@ ${fallbackQuestion.questionText}
       },
     });
   } catch (error) {
-    console.error("Exam prep error:", error);
+    console.error("Exam/Test Questions error:", error);
     return res.json({
       message:
-        "Sorry, I encountered an error with exam prep. Please try again.",
+        "Sorry, I encountered an error with Exam/Test Questions. Please try again.",
       status: "error",
-      echo: "Sorry, I encountered an error with exam prep. Please try again.",
+      echo: "Sorry, I encountered an error with Exam/Test Questions. Please try again.",
       error: error.message,
     });
   }

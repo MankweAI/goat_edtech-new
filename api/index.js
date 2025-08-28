@@ -265,12 +265,12 @@ async function showWelcomeMenu(user, subscriberId) {
     ? `\n\n👋 **Welcome back!** Ready to continue with *${user.preferences.last_subject}*?`
     : "";
 
-  // Renamed menu item to “Exam/Test Help”
+  // Renamed menu item to “Exam/Test Questions”
   return `**Welcome to The GOAT.** I'm here help you study with calm and clarity.${welcomeBack}
 
 **What do you need right now?**
 
-1️⃣ 📅 Exam/Test Help
+1️⃣ 📝 Exam/Test Questions
 2️⃣ 📚 Homework Help 🫶 ⚡  
 3️⃣ 🧮 Tips & Hacks
 
