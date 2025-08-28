@@ -2,13 +2,12 @@
 /**
  * Exam Preparation API Endpoint - Image Intelligence Mode
  * GOAT Bot 2.0
- * Updated: 2025-08-28 15:25:00 UTC
+ * Updated: 2025-08-28 15:33:00 UTC
  * Developer: DithetoMokgabudi
  *
- * UX Enhancements (no feature changes):
- * - Consistent headers, separators, and emojis
- * - Standardized interactive menu (1 Hint • 2 Different problem • 3 Main Menu)
- * - Wrapped messages with formatResponseWithEnhancedSeparation
+ * Hotfix:
+ * - Defensive require for image-intelligence to prevent "Cannot find module" crash in prod bundler
+ * - Explicit .js extension and safe fallback stub (keeps endpoint alive)
  */
 
 const stateModule = require("../lib/core/state");
@@ -17,9 +16,41 @@ const trackManyState = stateModule.trackManyState;
 const { persistUserState, getOrCreateUserState } = stateModule;
 const { ManyCompatResponse } = require("../lib/core/responses");
 const { extractImageData } = require("../lib/core/commands");
-const {
-  ExamPrepImageIntelligence,
-} = require("../lib/features/exam-prep/image-intelligence");
+
+// Safe require utility to avoid hard crashes when a file is missing in the bundle
+function safeRequire(path, fallbackFactory) {
+  try {
+    // Prefer explicit extension to help some bundlers
+    return require(path);
+  } catch (e1) {
+    try {
+      return require(path.replace(/(\.js)?$/, ".js"));
+    } catch (e2) {
+      console.error(`❌ Failed to require module "${path}":`, e2.message);
+      if (typeof fallbackFactory === "function") {
+        console.warn(`⚠️ Using fallback stub for "${path}"`);
+        return fallbackFactory();
+      }
+      throw e2;
+    }
+  }
+}
+
+const { ExamPrepImageIntelligence } = safeRequire(
+  "../lib/features/exam-prep/image-intelligence.js",
+  () => ({
+    ExamPrepImageIntelligence: class {
+      async extractIntelligenceFromImage() {
+        return {
+          success: false,
+          error: "exam-prep image-intelligence module unavailable",
+          fallbackRequired: true,
+        };
+      }
+    },
+  })
+);
+
 const {
   PsychologicalReportGenerator,
 } = require("../lib/features/exam-prep/psychological-report");
@@ -39,20 +70,12 @@ const {
 const analyticsModule = require("../lib/utils/analytics");
 const { detectDeviceType } = require("../lib/utils/device-detection");
 const { downloadImageAsBase64 } = require("../lib/utils/fetch-image");
-const {
-  formatResponseWithEnhancedSeparation,
-} = require("../lib/utils/formatting");
 
 const imageIntelligence = new ExamPrepImageIntelligence();
 const psychReportGenerator = new PsychologicalReportGenerator();
 const foundationDetector = new FoundationGapDetector();
 const solutionAnalyzer = new SolutionAnalyzer();
 const adaptiveDifficulty = new AdaptiveDifficulty();
-
-// Standardized interactive menu for this feature (numbers consistent everywhere)
-const MENU_INTERACTIVE = `1️⃣ 💡 Hint
-2️⃣ 🔄 Different problem
-3️⃣ 🏠 Main Menu`;
 
 module.exports = async (req, res) => {
   try {
@@ -88,13 +111,8 @@ module.exports = async (req, res) => {
       } else if ((message || "").trim()) {
         response = await handleInteractiveMode(user, message);
       } else {
-        const content =
-          "🧩 Ready when you are.\nUpload your working photo, or pick an option below.";
-        response = formatResponseWithEnhancedSeparation(
-          content,
-          MENU_INTERACTIVE,
-          user.preferences.device_type
-        );
+        response =
+          "I'm ready when you are. Upload your working photo, or reply 1 (Hint), 2 (Different problem), 3 (Main Menu).";
       }
 
       user.conversation_history = user.conversation_history || [];
@@ -143,20 +161,15 @@ module.exports = async (req, res) => {
       imageInfo &&
       (imageInfo.type === "direct" || imageInfo.type === "url")
     ) {
-      // NEW: If URL, download to base64 for OCR reliability
+      // If URL, download to base64 for OCR reliability
       let normalizedImageData = imageInfo.data;
       if (imageInfo.type === "url") {
         try {
           normalizedImageData = await downloadImageAsBase64(imageInfo.data);
         } catch (e) {
           console.error("Image URL download failed:", e.message);
-          const content =
+          const response =
             "📸 I couldn't fetch the image from the link. Please resend a clearer photo.";
-          const response = formatResponseWithEnhancedSeparation(
-            content,
-            "Tip: Fill the frame, avoid shadows.",
-            user.preferences.device_type
-          );
           return manyCompatRes.json({
             message: response,
             status: "error",
@@ -192,7 +205,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Otherwise, prompt for image (simple, no numeric menu here)
+    // Otherwise, prompt for image
     const response = generateImageUploadPrompt(user);
     user.conversation_history = user.conversation_history || [];
     user.conversation_history.push({
@@ -228,8 +241,7 @@ async function handleImageIntelligence(user, imageInfo) {
       imageData,
       user.id
     );
-    if (!result.success)
-      return generateImageProcessingError(user, result.error);
+    if (!result.success) return generateImageProcessingError();
 
     const intelligence = result.intelligence;
     const foundationGaps = foundationDetector.detectFoundationGaps(
@@ -278,15 +290,10 @@ async function handleImageIntelligence(user, imageInfo) {
 
     const confirmBlock = formatPainpointConfirmationPrompt(options);
 
-    const content = `🎯 **I can see what's happening**\n\n${conciseReport}\n\n${confirmBlock}`;
-    return formatResponseWithEnhancedSeparation(
-      content,
-      'Reply "yes" to confirm the main struggle, or choose A/B/C.',
-      user.preferences.device_type
-    );
+    return `${conciseReport}\n\n${confirmBlock}`;
   } catch (error) {
     console.error("Image intelligence processing failed:", error);
-    return generateFallbackImageResponse(user);
+    return generateFallbackImageResponse();
   }
 }
 
@@ -324,12 +331,14 @@ function buildPainpointOptions(intelligence, foundationGaps = []) {
 
 function formatPainpointConfirmationPrompt(options) {
   const [A, B, C] = options.suggestions;
-  return `🧠 **Focus check**
-Main struggle I see: ${options.primary}
-
+  return `I think you're also struggling with:
 A) ${A}
 B) ${B}
-C) ${C}`;
+C) ${C}
+
+Am I correct?
+- Reply: "yes" to confirm "${options.primary}"
+- Or pick A/B/C`;
 }
 
 // Handle confirmation replies and then generate plan + first diagnostic
@@ -345,26 +354,20 @@ async function handlePainpointConfirmation(user, message = "") {
   else if (text === "c") confirmed = suggestions[2];
 
   if (!confirmed) {
-    const content = `Please pick one:
-• Reply "yes" to confirm "${primary}"
-• Or choose A/B/C`;
-    return formatResponseWithEnhancedSeparation(
-      content,
-      'Reply "yes" or choose A/B/C.',
-      user.preferences.device_type
-    );
+    return `Please pick one: reply "yes" to confirm "${primary}" or choose A/B/C.`;
   }
 
   // Store confirmed painpoint
   user.context.confirmed_painpoint = confirmed;
   user.context.painpointConfirm.awaiting = false;
 
-  const plan = `🧭 **Plan:** We’ll stabilise your method fast.
-• Phase 1: Method basics
-• Phase 2: Pattern drills
-• Phase 3: Speed + confidence
+  const plan = `Ok cool — I have a plan to get you mastering this.
+Total time with me: about 7 hours.
+• Phase 1 (stabilise method): 2.5h
+• Phase 2 (pattern drills): 3.5h
+• Phase 3 (speed + confidence): 1h
 
-First, a quick diagnostic. Do this on paper and upload your working.`;
+Right now, let's test your "${confirmed}" with a quick diagnostic. Do this on paper and upload your working.`;
 
   // Generate first question targeted to confirmed painpoint
   const intelligence = confirmCtx.intelligence || {};
@@ -383,24 +386,20 @@ First, a quick diagnostic. Do this on paper and upload your working.`;
   user.context.interactiveMode = true;
   user.context.currentQuestion = firstQuestion;
 
-  const content = `${plan}\n\n🧩 **Question:**\n${firstQuestion.questionText}\n\n📝 When done, upload a photo of your working.`;
-  return formatResponseWithEnhancedSeparation(
-    content,
-    MENU_INTERACTIVE,
-    user.preferences.device_type
-  );
+  return `${plan}
+
+${firstQuestion.questionText}
+
+📝 When done, upload a photo of your working. Or reply:
+1️⃣ Hint
+2️⃣ Different problem
+3️⃣ Main Menu`;
 }
 
 // Analyze solution uploads
 async function handleSolutionUpload(user, imageInfo) {
   if (!imageInfo || !user.context?.currentQuestion) {
-    const content =
-      "I’m ready to analyze your work. Upload a photo, or pick an option below.";
-    return formatResponseWithEnhancedSeparation(
-      content,
-      MENU_INTERACTIVE,
-      user.preferences.device_type
-    );
+    return "Please upload a photo of your solution attempt, or reply 1 (Hint), 2 (Different problem), 3 (Main Menu).";
   }
 
   try {
@@ -420,22 +419,22 @@ async function handleSolutionUpload(user, imageInfo) {
     const nextQuestion = await generateAdaptiveQuestion(analysis, user.context);
     user.context.currentQuestion = nextQuestion;
 
-    const feedback = generateSolutionFeedback(analysis);
-    const content = `${feedback}\n\nNext practice question:\n\n🧩 **Question:**\n${nextQuestion.questionText}\n\n📝 Upload your working when done.`;
-    return formatResponseWithEnhancedSeparation(
-      content,
-      MENU_INTERACTIVE,
-      user.preferences.device_type
+    return (
+      generateSolutionFeedback(analysis) +
+      `
+
+Next practice question:
+
+${nextQuestion.questionText}
+
+📝 Upload your working, or reply:
+1️⃣ Hint
+2️⃣ Different problem
+3️⃣ Main Menu`
     );
   } catch (error) {
     console.error("Solution analysis failed:", error);
-    const content =
-      "I couldn't analyze your solution. Please try uploading a clearer photo of your work.";
-    return formatResponseWithEnhancedSeparation(
-      content,
-      MENU_INTERACTIVE,
-      user.preferences.device_type
-    );
+    return "I couldn't analyze your solution. Please try uploading a clearer photo of your work.";
   }
 }
 
@@ -448,12 +447,9 @@ async function handleInteractiveMode(user, message) {
       user.context.currentQuestion,
       user.context
     );
-    const content = `💡 **Hint:** ${hint}\n\nNow try solving it and upload your work.`;
-    return formatResponseWithEnhancedSeparation(
-      content,
-      MENU_INTERACTIVE,
-      user.preferences.device_type
-    );
+    return `💡 **Hint:** ${hint}
+
+Now try solving it and upload your work!`;
   }
 
   if (lower === "2" || lower.includes("different")) {
@@ -476,26 +472,16 @@ async function handleInteractiveMode(user, message) {
 Just pick a number! ✨`;
   }
 
-  const content =
-    "I’m ready. Upload your working photo, or pick an option below.";
-  return formatResponseWithEnhancedSeparation(
-    content,
-    MENU_INTERACTIVE,
-    user.preferences.device_type
-  );
+  return `I'm ready. Upload your working photo, or reply:
+1️⃣ Hint
+2️⃣ Different problem
+3️⃣ Main Menu`;
 }
 
-// Generate the initial upload prompt (simple, no numeric menu here)
-function generateImageUploadPrompt(user) {
-  const content = `📸 **Exam/Test Help (image-only)**
-Take a clear photo with good lighting.
-• Fill the frame; avoid shadows
-• One question per photo works best`;
-  return formatResponseWithEnhancedSeparation(
-    content,
-    "When ready, upload your photo here.",
-    user.preferences.device_type
-  );
+// Generate the initial upload prompt
+function generateImageUploadPrompt() {
+  return `📸 **Exam/Test Help is image-only!**
+Upload a clear photo of the problem you're struggling with. I’ll read it, pinpoint the exact painpoint, and coach you through it.`;
 }
 
 // Question generation helpers (unchanged except tailored profile)
@@ -622,22 +608,10 @@ async function generateContextualHint(question, context) {
   return hints[Math.floor(Math.random() * hints.length)];
 }
 
-function generateImageProcessingError(user) {
-  const content =
-    "📸 I couldn't clearly read your problem. Please retake the photo with better lighting and fill the frame.";
-  return formatResponseWithEnhancedSeparation(
-    content,
-    "Tip: One question per photo works best.",
-    user.preferences.device_type
-  );
+function generateImageProcessingError() {
+  return `📸 I couldn't clearly read your problem. Please retake the photo with better lighting and fill the frame.`;
 }
 
-function generateFallbackImageResponse(user) {
-  const content =
-    "📸 I saw an image but couldn’t extract the problem. Please upload a clearer photo of a specific question you’re stuck on.";
-  return formatResponseWithEnhancedSeparation(
-    content,
-    "Tip: Hold your phone steady and fill the frame.",
-    user.preferences.device_type
-  );
+function generateFallbackImageResponse() {
+  return `📸 I saw an image but couldn’t extract the problem. Please upload a clearer photo of a specific question you’re stuck on.`;
 }
