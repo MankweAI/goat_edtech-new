@@ -38,7 +38,6 @@ const {
 } = require("../lib/utils/whatsapp-image");
 
 
-
 // Mastery-focused menu (consistent numbering)
 const MENU = `1️⃣ 📚 View solution
 2️⃣ 💡 Hint  
@@ -638,29 +637,6 @@ function listSubtopicsFallback(subject, topicKey) {
 }
 
 // Main handler
-
-
-// Flow screens
-async function screenStart(user) {
-  user.current_menu = "exam_prep_conversation";
-  user.context = user.context || {};
-  user.context.examTopicPractice = {
-    stage: "subject_grade",
-    progression: 0,
-    q_index: 0,
-    current_question: null,
-  };
-  const content =
-    `📝 **Topic Practice**\nUnlimited practice to master any topic.\n\n` +
-    `What subject and grade?\nExamples: "Mathematics 10", "Physical Sciences 11", "Geography 9"`;
-  const menu = `Reply: Subject + Grade (e.g., "Mathematics 10")`;
-  return formatResponseWithEnhancedSeparation(
-    content,
-    menu,
-    user.preferences.device_type
-  );
-}
-
 module.exports = async (req, res) => {
   try {
     const manyCompatRes = new ManyCompatResponse(res);
@@ -745,3 +721,24 @@ module.exports = async (req, res) => {
     });
   }
 };
+
+// Flow screens
+async function screenStart(user) {
+  user.current_menu = "exam_prep_conversation";
+  user.context = user.context || {};
+  user.context.examTopicPractice = {
+    stage: "subject_grade",
+    progression: 0,
+    q_index: 0,
+    current_question: null,
+  };
+  const content =
+    `📝 **Topic Practice**\nUnlimited practice to master any topic.\n\n` +
+    `What subject and grade?\nExamples: "Mathematics 10", "Physical Sciences 11", "Geography 9"`;
+  const menu = `Reply: Subject + Grade (e.g., "Mathematics 10")`;
+  return formatResponseWithEnhancedSeparation(
+    content,
+    menu,
+    user.preferences.device_type
+  );
+}
