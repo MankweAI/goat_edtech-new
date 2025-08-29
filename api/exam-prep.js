@@ -13,6 +13,7 @@
  *   (Separator + menu appended by formatter)
  */
 
+const crypto = require("crypto");
 const {
   getOrCreateUserState,
   trackManyState,
@@ -33,8 +34,12 @@ const {
   formatResponseWithEnhancedSeparation,
 } = require("../lib/utils/formatting");
 const analyticsModule = require("../lib/utils/analytics");
-// NEW: WhatsApp image sender (ManyChat)
-const { sendImageViaManyChat } = require("../lib/utils/whatsapp-image");
+// Image sender + dedup helpers
+const {
+  sendImageViaManyChat,
+  wasImageRecentlySent,
+} = require("../lib/utils/whatsapp-image");
+
 
 // Mastery-focused menu (consistent numbering)
 const MENU = `1️⃣ 📚 View solution
@@ -300,23 +305,31 @@ async function ensureQuestion(user, regenerate = false) {
 
   let note = "";
   if (q.hasLatex && q.latexImage && q.latexImage.data && q.latexImage.format) {
-    note = "\n\n[equation sent as image]";
-    // Fire-and-forget image send to ManyChat
-    setImmediate(async () => {
-      try {
-        if (process.env.MANYCHAT_API_TOKEN) {
-          await sendImageViaManyChat(
-            user.id,
-            q.latexImage,
-            `Q${m.q_index} Equation`
-          );
-        } else {
-          console.log("ℹ️ ManyChat token missing; skipping image send");
+    const imageId = crypto
+      .createHash("md5")
+      .update(q.latexImage.data)
+      .digest("hex");
+
+    if (wasImageRecentlySent(user.id, imageId)) {
+      note = "\n\n[equation shown in previous image]";
+    } else {
+      note = "\n\n[equation sent as image]";
+      setImmediate(async () => {
+        try {
+          if (process.env.MANYCHAT_API_TOKEN) {
+            await sendImageViaManyChat(
+              user.id,
+              q.latexImage,
+              `Q${m.q_index} Equation`
+            );
+          } else {
+            console.log("ℹ️ ManyChat token missing; skipping image send");
+          }
+        } catch (e) {
+          console.error("❌ Failed to send formula image:", e.message);
         }
-      } catch (e) {
-        console.error("❌ Failed to send formula image:", e.message);
-      }
-    });
+      });
+    }
   }
 
   const content = `${title}\n\n${qTitle}\n\n${q.questionText}${note}`;
@@ -511,7 +524,6 @@ Just pick a number! ✨`;
   }
 
   if (wantsChangeTopic(t)) {
-    // Re-list topics from CAPS-first
     const capsTopics = listTopicsCAPS(m.subject, m.grade) || [];
     const topics =
       capsTopics.length > 0
@@ -553,24 +565,36 @@ Just pick a number! ✨`;
       q.solutionLatexImage.data &&
       q.solutionLatexImage.format
     ) {
-      note = "\n\n[equation sent as image]";
-      setImmediate(async () => {
-        try {
-          if (process.env.MANYCHAT_API_TOKEN) {
-            await sendImageViaManyChat(
-              user.id,
-              q.solutionLatexImage,
-              `Q${m.q_index} Solution`
-            );
-          } else {
-            console.log(
-              "ℹ️ ManyChat token missing; skipping image send (solution)"
+      const imageId = crypto
+        .createHash("md5")
+        .update(q.solutionLatexImage.data)
+        .digest("hex");
+
+      if (wasImageRecentlySent(user.id, imageId)) {
+        note = "\n\n[equation shown in previous image]";
+      } else {
+        note = "\n\n[equation sent as image]";
+        setImmediate(async () => {
+          try {
+            if (process.env.MANYCHAT_API_TOKEN) {
+              await sendImageViaManyChat(
+                user.id,
+                q.solutionLatexImage,
+                `Q${m.q_index} Solution`
+              );
+            } else {
+              console.log(
+                "ℹ️ ManyChat token missing; skipping image send (solution)"
+              );
+            }
+          } catch (e) {
+            console.error(
+              "❌ Failed to send solution formula image:",
+              e.message
             );
           }
-        } catch (e) {
-          console.error("❌ Failed to send solution formula image:", e.message);
-        }
-      });
+        });
+      }
     }
 
     const content = `${header(user)}\n\n🧩 **Solution (steps):**\n\n${
