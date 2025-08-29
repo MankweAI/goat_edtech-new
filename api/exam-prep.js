@@ -2,13 +2,13 @@
 /**
  * Exam/Test Help → Topic Practice
  * GOAT Bot 2.0
- * Updated: 2025-08-29 11:40:00 UTC
+ * Updated: 2025-08-29 11:07:00 UTC
  * Developer: DithetoMokgabudi
  *
- * Change:
- * - Make media sending synchronous in serverless (await ManyChat send before responding).
- *   setImmediate tasks can be killed when the function returns.
- * - Only claim "[... sent as image]" after a successful send; otherwise show "[... detected]".
+ * Change (Hotfix):
+ * - If MANYCHAT_API_TOKEN is missing, do NOT claim "[... sent as image]".
+ *   Show a neutral "[equation detected]" / "[graph detected]" note instead.
+ * - Prevents misleading UX when env is not configured in prod.
  */
 
 const crypto = require("crypto");
@@ -37,6 +37,8 @@ const {
   wasImageRecentlySent,
 } = require("../lib/utils/whatsapp-image");
 
+
+
 // Mastery-focused menu (consistent numbering)
 const MENU = `1️⃣ 📚 View solution
 2️⃣ 💡 Hint  
@@ -59,6 +61,8 @@ function labelize(key) {
     .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
     .join(" ");
 }
+
+// Number + topic emojis (consistent lists)
 function numberToEmoji(n) {
   const map = {
     1: "1️⃣",
@@ -98,6 +102,8 @@ function formatEmojiNumberedList(items) {
     .map((t, i) => `${numberToEmoji(i + 1)} ${pickTopicEmoji(t)} ${t}`)
     .join("\n");
 }
+
+// Progressive difficulty tiers
 function getDifficulty(level = 0) {
   if (level <= 0)
     return {
@@ -127,6 +133,8 @@ function updateProgression(m, action) {
     m.progression = Math.min(3, m.progression + 1);
   if (action === "hint" || action === "solution") m.lastHelpUsed = true;
 }
+
+// Existing header (kept for solution/hint screens)
 function header(user) {
   const m = user.context.examTopicPractice || {};
   const diff = getDifficulty(m.progression || 0);
@@ -135,6 +143,8 @@ function header(user) {
   const sub = m.subtopic ? ` • ${m.subtopic}` : "";
   return `🎯 ${subject}${topic}${sub}\n💪 ${diff.label}: ${diff.description}`;
 }
+
+// NEW: Title-only header (no difficulty line) for the question screen
 function headerTitleOnly(user) {
   const m = user.context.examTopicPractice || {};
   const subject = m.subject || "Mathematics";
@@ -142,10 +152,14 @@ function headerTitleOnly(user) {
   const sub = m.subtopic ? ` • ${m.subtopic}` : "";
   return `🎯 ${subject}${topic}${sub}`;
 }
-function questionBanner(index = 1) {
-  const indent = "            ";
+
+// NEW: Centered question banner
+function questionBanner(index = 1, deviceType = "mobile") {
+  const indent = "            "; // 12 spaces
   return `${indent}*Question ${index}*`;
 }
+
+// Intent checks
 function wantsSolution(text) {
   const t = (text || "").toLowerCase();
   return t === "1" || t.includes("solution") || t.includes("answer");
@@ -203,12 +217,11 @@ async function ensureQuestion(user, regenerate = false) {
 
   const q = m.current_question;
   const title = headerTitleOnly(user);
-  const qTitle = questionBanner(m.q_index);
+  const qTitle = questionBanner(m.q_index, user.preferences.device_type);
 
   const canSendImages = Boolean(process.env.MANYCHAT_API_TOKEN);
   let note = "";
 
-  // Priority 1: Graph
   if (q.hasGraph && q.graphImage && q.graphImage.data && q.graphImage.format) {
     const imageId = crypto
       .createHash("md5")
@@ -216,29 +229,30 @@ async function ensureQuestion(user, regenerate = false) {
       .digest("hex");
     if (wasImageRecentlySent(user.id, imageId)) {
       note = "\n\n[graph shown in previous image]";
-    } else if (canSendImages) {
-      try {
-        console.log(
-          `📤 SENDING graph → channel=${
-            process.env.MANYCHAT_CHANNEL || "whatsapp"
-          }, format=${q.graphImage.format}`
-        );
-        await sendImageViaManyChat(
-          user.id,
-          q.graphImage,
-          `Q${m.q_index} Graph`
-        );
-        note = "\n\n[graph sent as image]";
-      } catch (e) {
-        console.error("❌ Graph send failed:", e.message);
-        note = "\n\n[graph detected]";
-      }
     } else {
-      note = "\n\n[graph detected]";
+      note = canSendImages
+        ? "\n\n[graph sent as image]"
+        : "\n\n[graph detected]";
+      if (canSendImages) {
+        setImmediate(async () => {
+          try {
+            console.log(
+              `📤 Queue graph send → channel=${
+                process.env.MANYCHAT_CHANNEL || "whatsapp"
+              }, format=${q.graphImage.format}`
+            );
+            await sendImageViaManyChat(
+              user.id,
+              q.graphImage,
+              `Q${m.q_index} Graph`
+            );
+          } catch (e) {
+            console.error("❌ Failed to send graph image:", e.message);
+          }
+        });
+      }
     }
-  }
-  // Priority 2: LaTeX
-  else if (
+  } else if (
     q.hasLatex &&
     q.latexImage &&
     q.latexImage.data &&
@@ -250,25 +264,28 @@ async function ensureQuestion(user, regenerate = false) {
       .digest("hex");
     if (wasImageRecentlySent(user.id, imageId)) {
       note = "\n\n[equation shown in previous image]";
-    } else if (canSendImages) {
-      try {
-        console.log(
-          `📤 SENDING LaTeX → channel=${
-            process.env.MANYCHAT_CHANNEL || "whatsapp"
-          }, format=${q.latexImage.format}`
-        );
-        await sendImageViaManyChat(
-          user.id,
-          q.latexImage,
-          `Q${m.q_index} Equation`
-        );
-        note = "\n\n[equation sent as image]";
-      } catch (e) {
-        console.error("❌ LaTeX send failed:", e.message);
-        note = "\n\n[equation detected]";
-      }
     } else {
-      note = "\n\n[equation detected]";
+      note = canSendImages
+        ? "\n\n[equation sent as image]"
+        : "\n\n[equation detected]";
+      if (canSendImages) {
+        setImmediate(async () => {
+          try {
+            console.log(
+              `📤 Queue LaTeX send → channel=${
+                process.env.MANYCHAT_CHANNEL || "whatsapp"
+              }, format=${q.latexImage.format}`
+            );
+            await sendImageViaManyChat(
+              user.id,
+              q.latexImage,
+              `Q${m.q_index} Equation`
+            );
+          } catch (e) {
+            console.error("❌ Failed to send formula image:", e.message);
+          }
+        });
+      }
     }
   }
 
@@ -280,12 +297,14 @@ async function ensureQuestion(user, regenerate = false) {
   );
 }
 
+
 async function handleSubjectGrade(user, text) {
   const m = user.context.examTopicPractice;
   const { subject, grade } = parseSubjectGrade(text);
   m.subject = subject;
   m.grade = grade;
 
+  // CAPS-first topics; fallback to probing/examples
   const capsTopics = listTopicsCAPS(subject, grade);
   let topics = [];
   let fromCAPS = false;
@@ -300,6 +319,7 @@ async function handleSubjectGrade(user, text) {
   m._topics_from_caps = fromCAPS;
   m.stage = "topic_select";
 
+  // Enhanced emoji-numbered list
   const prettyTopics = topics.map((t) => labelize(t));
   const list = formatEmojiNumberedList(prettyTopics);
 
@@ -327,12 +347,53 @@ async function handleTopicSelect(user, text) {
     );
   }
 
-  const key = topics[pick - 1];
+  const key = topics[pick - 1]; // raw CAPS topic or fallback label
   m.topic = labelize(key);
 
+  // Subtopics: CAPS-first with original key; fallback to probing DB
   const subs = m._topics_from_caps
     ? listSubtopicsCAPS(m.subject, m.grade, key)
     : listSubtopicsFallback(m.subject, key);
+
+  if (!subs || subs.length === 0) {
+    m.subtopic = m.topic;
+    m.stage = "loop";
+    m.q_index = 0;
+    m.current_question = null;
+    return await ensureQuestion(user, true);
+  }
+
+  m._subtopics = subs.slice(0, 8);
+  m.stage = "subtopic_select";
+
+  // Consistent sub-topic list formatting (number emoji + 🧩)
+  const subList = m._subtopics
+    .map((s, i) => `${numberToEmoji(i + 1)} 🧩 ${s}`)
+    .join("\n");
+  const content = `Nice. ${m.topic}.\n\nPick a sub-topic:\n\n${subList}`;
+  return formatResponseWithEnhancedSeparation(
+    content,
+    `Reply with a number (e.g., 1)`,
+    user.preferences.device_type
+  );
+}
+
+async function handleTopicFree(user, text) {
+  const m = user.context.examTopicPractice;
+  const topicText = (text || "algebra").trim();
+  m.topic = topicText
+    .split(" ")
+    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+    .join(" ");
+
+  const subsCAPS = listSubtopicsCAPS(m.subject, m.grade, topicText);
+  const subs =
+    subsCAPS && subsCAPS.length > 0
+      ? subsCAPS
+      : listSubtopicsFallback(
+          m.subject,
+          topicText.toLowerCase().replace(/\s+/g, "_")
+        );
 
   if (!subs || subs.length === 0) {
     m.subtopic = m.topic;
@@ -383,36 +444,60 @@ async function handleLoop(user, text) {
   const m = user.context.examTopicPractice;
   const t = (text || "").trim();
 
-  if (wantsExit(t)) {
-    user.current_menu = "welcome";
-    user.context = {};
-    return `*Welcome to The GOAT.* I'm here help you study with calm and clarity.
+  if (wantsSolution(t)) {
+    const q = m.current_question;
+    if (!q) return await ensureQuestion(user, false);
+    updateProgression(m, "solution");
 
-*What do you need right now?*
+    const canSendImages = Boolean(process.env.MANYCHAT_API_TOKEN);
+    let note = "";
 
-1️⃣ 📝 Topic Practice Questions
-2️⃣ 📚 Homework Help 🫶 ⚡  
-3️⃣ 🧮 Tips & Hacks
+    if (
+      q.hasSolutionLatex &&
+      q.solutionLatexImage &&
+      q.solutionLatexImage.data &&
+      q.solutionLatexImage.format
+    ) {
+      const imageId = crypto
+        .createHash("md5")
+        .update(q.solutionLatexImage.data)
+        .digest("hex");
+      if (wasImageRecentlySent(user.id, imageId)) {
+        note = "\n\n[equation shown in previous image]";
+      } else {
+        note = canSendImages
+          ? "\n\n[equation sent as image]"
+          : "\n\n[equation detected]";
+        if (canSendImages) {
+          setImmediate(async () => {
+            try {
+              console.log(
+                `📤 Queue Solution LaTeX send → channel=${
+                  process.env.MANYCHAT_CHANNEL || "whatsapp"
+                }, format=${q.solutionLatexImage.format}`
+              );
+              await sendImageViaManyChat(
+                user.id,
+                q.solutionLatexImage,
+                `Q${m.q_index} Solution`
+              );
+            } catch (e) {
+              console.error(
+                "❌ Failed to send solution formula image:",
+                e.message
+              );
+            }
+          });
+        }
+      }
+    }
 
-Just pick a number! ✨`;
-  }
-
-  if (wantsChangeTopic(t)) {
-    const capsTopics = listTopicsCAPS(m.subject, m.grade) || [];
-    const topics =
-      capsTopics.length > 0
-        ? capsTopics.slice(0, 10)
-        : listTopicsFallback(m.subject).slice(0, 10);
-
-    m._topics = topics;
-    m._topics_from_caps = capsTopics.length > 0;
-    m.stage = "topic_select";
-
-    const list = formatEmojiNumberedList(topics.map((x) => labelize(x)));
-    const content = `Okay, pick a CAPS-aligned topic:\n\n${list}`;
+    const content = `${header(user)}\n\n🧩 **Solution (steps):**\n\n${
+      q.solution || "Solution available after attempt."
+    }${note}`;
     return formatResponseWithEnhancedSeparation(
       content,
-      `Reply with a number (e.g., 1)`,
+      MENU,
       user.preferences.device_type
     );
   }
@@ -448,25 +533,30 @@ Just pick a number! ✨`;
 
       if (wasImageRecentlySent(user.id, imageId)) {
         note = "\n\n[equation shown in previous image]";
-      } else if (canSendImages) {
-        try {
-          console.log(
-            `📤 SENDING Solution LaTeX → channel=${
-              process.env.MANYCHAT_CHANNEL || "whatsapp"
-            }, format=${q.solutionLatexImage.format}`
-          );
-          await sendImageViaManyChat(
-            user.id,
-            q.solutionLatexImage,
-            `Q${m.q_index} Solution`
-          );
-          note = "\n\n[equation sent as image]";
-        } catch (e) {
-          console.error("❌ Solution LaTeX send failed:", e.message);
-          note = "\n\n[equation detected]";
-        }
       } else {
-        note = "\n\n[equation detected]";
+        note = canSendImages
+          ? "\n\n[equation sent as image]"
+          : "\n\n[equation detected]";
+        if (canSendImages) {
+          setImmediate(async () => {
+            try {
+              await sendImageViaManyChat(
+                user.id,
+                q.solutionLatexImage,
+                `Q${m.q_index} Solution`
+              );
+            } catch (e) {
+              console.error(
+                "❌ Failed to send solution formula image:",
+                e.message
+              );
+            }
+          });
+        } else {
+          console.log(
+            "ℹ️ ManyChat token missing; skipping image send (solution)"
+          );
+        }
       }
     }
 
@@ -546,22 +636,31 @@ function listSubtopicsFallback(subject, topicKey) {
   const merged = Array.from(new Set([...ex, ...struggles])).filter(Boolean);
   return merged.slice(0, 8);
 }
-function firstHint(solution = "") {
-  if (!solution)
-    return "Start by writing what’s given vs what’s required; choose the rule that links them.";
-  const step1 = solution.split("\n").find((ln) => /\*\*Step\s*1/i.test(ln));
-  if (step1) return step1.replace(/\*\*/g, "").trim();
-  const first = solution
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean)[0];
-  return (
-    first ||
-    "Identify the relationship, set up the equation, then isolate the unknown."
+
+// Main handler
+
+
+// Flow screens
+async function screenStart(user) {
+  user.current_menu = "exam_prep_conversation";
+  user.context = user.context || {};
+  user.context.examTopicPractice = {
+    stage: "subject_grade",
+    progression: 0,
+    q_index: 0,
+    current_question: null,
+  };
+  const content =
+    `📝 **Topic Practice**\nUnlimited practice to master any topic.\n\n` +
+    `What subject and grade?\nExamples: "Mathematics 10", "Physical Sciences 11", "Geography 9"`;
+  const menu = `Reply: Subject + Grade (e.g., "Mathematics 10")`;
+  return formatResponseWithEnhancedSeparation(
+    content,
+    menu,
+    user.preferences.device_type
   );
 }
 
-// Main handler
 module.exports = async (req, res) => {
   try {
     const manyCompatRes = new ManyCompatResponse(res);
@@ -646,63 +745,3 @@ module.exports = async (req, res) => {
     });
   }
 };
-
-// Flow screens
-async function screenStart(user) {
-  user.current_menu = "exam_prep_conversation";
-  user.context = user.context || {};
-  user.context.examTopicPractice = {
-    stage: "subject_grade",
-    progression: 0,
-    q_index: 0,
-    current_question: null,
-  };
-  const content =
-    `📝 **Topic Practice**\nUnlimited practice to master any topic.\n\n` +
-    `What subject and grade?\nExamples: "Mathematics 10", "Physical Sciences 11", "Geography 9"`;
-  const menu = `Reply: Subject + Grade (e.g., "Mathematics 10")`;
-  return formatResponseWithEnhancedSeparation(
-    content,
-    menu,
-    user.preferences.device_type
-  );
-}
-
-async function handleTopicFree(user, text) {
-  const m = user.context.examTopicPractice;
-  const topicText = (text || "algebra").trim();
-  m.topic = topicText
-    .split(" ")
-    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
-    .join(" ");
-
-  const subsCAPS = listSubtopicsCAPS(m.subject, m.grade, topicText);
-  const subs =
-    subsCAPS && subsCAPS.length > 0
-      ? subsCAPS
-      : listSubtopicsFallback(
-          m.subject,
-          topicText.toLowerCase().replace(/\s+/g, "_")
-        );
-
-  if (!subs || subs.length === 0) {
-    m.subtopic = m.topic;
-    m.stage = "loop";
-    m.q_index = 0;
-    m.current_question = null;
-    return await ensureQuestion(user, true);
-  }
-
-  m._subtopics = subs.slice(0, 8);
-  m.stage = "subtopic_select";
-
-  const subList = m._subtopics
-    .map((s, i) => `${numberToEmoji(i + 1)} 🧩 ${s}`)
-    .join("\n");
-  const content = `Nice. ${m.topic}.\n\nPick a sub-topic:\n\n${subList}`;
-  return formatResponseWithEnhancedSeparation(
-    content,
-    `Reply with a number (e.g., 1)`,
-    user.preferences.device_type
-  );
-}
