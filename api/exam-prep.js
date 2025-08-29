@@ -2,14 +2,15 @@
 /**
  * Exam/Test Help → Topic Practice (Text-only)
  * GOAT Bot 2.0
- * Updated: 2025-08-29 08:10:00 UTC
+ * Updated: 2025-08-29 08:32:00 UTC
  * Developer: DithetoMokgabudi
  *
  * Change:
- * - Use CAPS taxonomy for Topics/Sub-topics (incl. Chemistry → Physical Sciences alias)
- * - Always show topic lists with consistent emoji-numbered formatting
- * - Sub-topic lists use number emojis + 🧩 consistently
- * - “Got it: *Subject Grade*” copy for subject/grade confirmation
+ * - Improve question screen formatting:
+ *   🎯 Subject • Topic • Subtopic
+ *        *Question N*
+ *   <question text>
+ *   (Separator + menu appended by formatter)
  */
 
 const {
@@ -127,6 +128,8 @@ function updateProgression(m, action) {
     m.progression = Math.min(3, m.progression + 1);
   if (action === "hint" || action === "solution") m.lastHelpUsed = true;
 }
+
+// Existing header (kept for solution/hint screens)
 function header(user) {
   const m = user.context.examTopicPractice || {};
   const diff = getDifficulty(m.progression || 0);
@@ -135,28 +138,23 @@ function header(user) {
   const sub = m.subtopic ? ` • ${m.subtopic}` : "";
   return `🎯 ${subject}${topic}${sub}\n💪 ${diff.label}: ${diff.description}`;
 }
-function buildQHeader(user, index = 1) {
-  const diffLabel = getDifficulty(
-    user.context.examTopicPractice.progression || 0
-  ).label;
-  const marks =
-    diffLabel === "Expert"
-      ? 6
-      : diffLabel === "Advanced"
-      ? 5
-      : diffLabel === "Foundation"
-      ? 2
-      : 3;
-  const time =
-    diffLabel === "Expert"
-      ? "~6 min"
-      : diffLabel === "Advanced"
-      ? "~5 min"
-      : diffLabel === "Foundation"
-      ? "~2 min"
-      : "~3 min";
-  return `Q${index} • ${diffLabel} • Master this concept • ${time}`;
+
+// NEW: Title-only header (no difficulty line) for the question screen
+function headerTitleOnly(user) {
+  const m = user.context.examTopicPractice || {};
+  const subject = m.subject || "Mathematics";
+  const topic = m.topic ? ` • ${m.topic}` : "";
+  const sub = m.subtopic ? ` • ${m.subtopic}` : "";
+  return `🎯 ${subject}${topic}${sub}`;
 }
+
+// NEW: Centered question banner
+function questionBanner(index = 1, deviceType = "mobile") {
+  // Fixed indent works best across WhatsApp clients
+  const indent = "            "; // 12 spaces
+  return `${indent}*Question ${index}*`;
+}
+
 function firstHint(solution = "") {
   if (!solution)
     return "Start with what’s given vs what’s required; choose the rule that links them.";
@@ -292,10 +290,13 @@ async function ensureQuestion(user, regenerate = false) {
     m.q_index = (m.q_index || 0) + 1;
     m.lastHelpUsed = false;
   }
+
+  // Improved question screen format
   const q = m.current_question;
-  const content = `${header(user)}\n\n${buildQHeader(user, m.q_index)}\n\n${
-    q.questionText
-  }`;
+  const title = headerTitleOnly(user);
+  const qTitle = questionBanner(m.q_index, user.preferences.device_type);
+
+  const content = `${title}\n\n${qTitle}\n\n${q.questionText}`;
   return formatResponseWithEnhancedSeparation(
     content,
     MENU,
@@ -349,7 +350,7 @@ async function handleSubjectGrade(user, text) {
   const prettyTopics = topics.map((t) => labelize(t));
   const list = formatEmojiNumberedList(prettyTopics);
 
-  // Copy: “Got it: *Subject Grade*” and ask to pick topic
+  // Chemistry alias handled by checkSubjectAvailability → Physical Sciences
   const content = `Got it: *${subject} Grade ${grade}*\n\nWhat topic would you like to practice?\n\n${list}\n\nPick a number to start practicing.`;
   return formatResponseWithEnhancedSeparation(
     content,
