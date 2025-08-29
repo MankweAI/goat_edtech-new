@@ -298,18 +298,49 @@ async function ensureQuestion(user, regenerate = false) {
     m.lastHelpUsed = false;
   }
 
-  // Improved question screen format (+ Phase 1 formula image)
+  // Improved question screen + Phase 2 preferred image (graph > LaTeX)
   const q = m.current_question;
   const title = headerTitleOnly(user);
   const qTitle = questionBanner(m.q_index, user.preferences.device_type);
 
   let note = "";
-  if (q.hasLatex && q.latexImage && q.latexImage.data && q.latexImage.format) {
+  // Priority 1: Graph
+  if (q.hasGraph && q.graphImage && q.graphImage.data && q.graphImage.format) {
+    const imageId = crypto
+      .createHash("md5")
+      .update(q.graphImage.data)
+      .digest("hex");
+    if (wasImageRecentlySent(user.id, imageId)) {
+      note = "\n\n[graph shown in previous image]";
+    } else {
+      note = "\n\n[graph sent as image]";
+      setImmediate(async () => {
+        try {
+          if (process.env.MANYCHAT_API_TOKEN) {
+            await sendImageViaManyChat(
+              user.id,
+              q.graphImage,
+              `Q${m.q_index} Graph`
+            );
+          } else {
+            console.log("ℹ️ ManyChat token missing; skipping graph send");
+          }
+        } catch (e) {
+          console.error("❌ Failed to send graph image:", e.message);
+        }
+      });
+    }
+  } else if (
+    q.hasLatex &&
+    q.latexImage &&
+    q.latexImage.data &&
+    q.latexImage.format
+  ) {
+    // Priority 2: LaTeX
     const imageId = crypto
       .createHash("md5")
       .update(q.latexImage.data)
       .digest("hex");
-
     if (wasImageRecentlySent(user.id, imageId)) {
       note = "\n\n[equation shown in previous image]";
     } else {
@@ -323,7 +354,7 @@ async function ensureQuestion(user, regenerate = false) {
               `Q${m.q_index} Equation`
             );
           } else {
-            console.log("ℹ️ ManyChat token missing; skipping image send");
+            console.log("ℹ️ ManyChat token missing; skipping equation send");
           }
         } catch (e) {
           console.error("❌ Failed to send formula image:", e.message);
@@ -559,6 +590,7 @@ Just pick a number! ✨`;
     updateProgression(m, "solution");
 
     let note = "";
+    // For solution, prefer LaTeX image (we don't render graphs for solution in Phase 2)
     if (
       q.hasSolutionLatex &&
       q.solutionLatexImage &&
@@ -569,7 +601,6 @@ Just pick a number! ✨`;
         .createHash("md5")
         .update(q.solutionLatexImage.data)
         .digest("hex");
-
       if (wasImageRecentlySent(user.id, imageId)) {
         note = "\n\n[equation shown in previous image]";
       } else {
@@ -635,9 +666,9 @@ Just pick a number! ✨`;
   );
 }
 
-
 // Main handler
 module.exports = async (req, res) => {
+  // unchanged main handler
   try {
     const manyCompatRes = new ManyCompatResponse(res);
     const subscriberId =
@@ -678,7 +709,6 @@ module.exports = async (req, res) => {
       response = await screenStart(user);
     }
 
-    // Persist conversation
     user.conversation_history = user.conversation_history || [];
     if (message) {
       user.conversation_history.push({
