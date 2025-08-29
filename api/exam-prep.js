@@ -382,7 +382,7 @@ async function screenStart(user) {
     current_question: null,
   };
   const content =
-    `📝 **Topic Practice (no images)**\nUnlimited practice to master any topic.\n\n` +
+    `📝 **Topic Practice**\nUnlimited practice to master any topic.\n\n` +
     `What subject and grade?\nExamples: "Mathematics 10", "Physical Sciences 11", "Geography 9"`;
   const menu = `Reply: Subject + Grade (e.g., "Mathematics 10")`;
   return formatResponseWithEnhancedSeparation(
