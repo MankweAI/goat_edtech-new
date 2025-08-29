@@ -33,6 +33,8 @@ const {
   formatResponseWithEnhancedSeparation,
 } = require("../lib/utils/formatting");
 const analyticsModule = require("../lib/utils/analytics");
+// NEW: WhatsApp image sender (ManyChat)
+const { sendImageViaManyChat } = require("../lib/utils/whatsapp-image");
 
 // Mastery-focused menu (consistent numbering)
 const MENU = `1️⃣ 📚 View solution
@@ -291,12 +293,33 @@ async function ensureQuestion(user, regenerate = false) {
     m.lastHelpUsed = false;
   }
 
-  // Improved question screen format
+  // Improved question screen format (+ Phase 1 formula image)
   const q = m.current_question;
   const title = headerTitleOnly(user);
   const qTitle = questionBanner(m.q_index, user.preferences.device_type);
 
-  const content = `${title}\n\n${qTitle}\n\n${q.questionText}`;
+  let note = "";
+  if (q.hasLatex && q.latexImage && q.latexImage.data && q.latexImage.format) {
+    note = "\n\n[equation sent as image]";
+    // Fire-and-forget image send to ManyChat
+    setImmediate(async () => {
+      try {
+        if (process.env.MANYCHAT_API_TOKEN) {
+          await sendImageViaManyChat(
+            user.id,
+            q.latexImage,
+            `Q${m.q_index} Equation`
+          );
+        } else {
+          console.log("ℹ️ ManyChat token missing; skipping image send");
+        }
+      } catch (e) {
+        console.error("❌ Failed to send formula image:", e.message);
+      }
+    });
+  }
+
+  const content = `${title}\n\n${qTitle}\n\n${q.questionText}${note}`;
   return formatResponseWithEnhancedSeparation(
     content,
     MENU,
@@ -522,9 +545,37 @@ Just pick a number! ✨`;
     const q = m.current_question;
     if (!q) return await ensureQuestion(user, false);
     updateProgression(m, "solution");
+
+    let note = "";
+    if (
+      q.hasSolutionLatex &&
+      q.solutionLatexImage &&
+      q.solutionLatexImage.data &&
+      q.solutionLatexImage.format
+    ) {
+      note = "\n\n[equation sent as image]";
+      setImmediate(async () => {
+        try {
+          if (process.env.MANYCHAT_API_TOKEN) {
+            await sendImageViaManyChat(
+              user.id,
+              q.solutionLatexImage,
+              `Q${m.q_index} Solution`
+            );
+          } else {
+            console.log(
+              "ℹ️ ManyChat token missing; skipping image send (solution)"
+            );
+          }
+        } catch (e) {
+          console.error("❌ Failed to send solution formula image:", e.message);
+        }
+      });
+    }
+
     const content = `${header(user)}\n\n🧩 **Solution (steps):**\n\n${
       q.solution || "Solution available after attempt."
-    }`;
+    }${note}`;
     return formatResponseWithEnhancedSeparation(
       content,
       MENU,
@@ -559,6 +610,7 @@ Just pick a number! ✨`;
     user.preferences.device_type
   );
 }
+
 
 // Main handler
 module.exports = async (req, res) => {
