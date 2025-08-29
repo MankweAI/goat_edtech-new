@@ -32,11 +32,11 @@ const {
   formatResponseWithEnhancedSeparation,
 } = require("../lib/utils/formatting");
 const analyticsModule = require("../lib/utils/analytics");
-// Image sender + dedup helpers
 const {
   sendImageViaManyChat,
   wasImageRecentlySent,
 } = require("../lib/utils/whatsapp-image");
+
 
 // Mastery-focused menu (consistent numbering)
 const MENU = `1️⃣ 📚 View solution
@@ -221,7 +221,6 @@ async function ensureQuestion(user, regenerate = false) {
   const canSendImages = Boolean(process.env.MANYCHAT_API_TOKEN);
   let note = "";
 
-  // Priority 1: Graph
   if (q.hasGraph && q.graphImage && q.graphImage.data && q.graphImage.format) {
     const imageId = crypto
       .createHash("md5")
@@ -236,6 +235,11 @@ async function ensureQuestion(user, regenerate = false) {
       if (canSendImages) {
         setImmediate(async () => {
           try {
+            console.log(
+              `📤 Queue graph send → channel=${
+                process.env.MANYCHAT_CHANNEL || "whatsapp"
+              }, format=${q.graphImage.format}`
+            );
             await sendImageViaManyChat(
               user.id,
               q.graphImage,
@@ -245,8 +249,6 @@ async function ensureQuestion(user, regenerate = false) {
             console.error("❌ Failed to send graph image:", e.message);
           }
         });
-      } else {
-        console.log("ℹ️ ManyChat token missing; skipping graph send");
       }
     }
   } else if (
@@ -255,7 +257,6 @@ async function ensureQuestion(user, regenerate = false) {
     q.latexImage.data &&
     q.latexImage.format
   ) {
-    // Priority 2: LaTeX
     const imageId = crypto
       .createHash("md5")
       .update(q.latexImage.data)
@@ -269,6 +270,11 @@ async function ensureQuestion(user, regenerate = false) {
       if (canSendImages) {
         setImmediate(async () => {
           try {
+            console.log(
+              `📤 Queue LaTeX send → channel=${
+                process.env.MANYCHAT_CHANNEL || "whatsapp"
+              }, format=${q.latexImage.format}`
+            );
             await sendImageViaManyChat(
               user.id,
               q.latexImage,
@@ -278,8 +284,6 @@ async function ensureQuestion(user, regenerate = false) {
             console.error("❌ Failed to send formula image:", e.message);
           }
         });
-      } else {
-        console.log("ℹ️ ManyChat token missing; skipping equation send");
       }
     }
   }
@@ -291,6 +295,7 @@ async function ensureQuestion(user, regenerate = false) {
     user.preferences.device_type
   );
 }
+
 
 async function handleSubjectGrade(user, text) {
   const m = user.context.examTopicPractice;
@@ -438,36 +443,60 @@ async function handleLoop(user, text) {
   const m = user.context.examTopicPractice;
   const t = (text || "").trim();
 
-  if (wantsExit(t)) {
-    user.current_menu = "welcome";
-    user.context = {};
-    return `*Welcome to The GOAT.* I'm here help you study with calm and clarity.
+  if (wantsSolution(t)) {
+    const q = m.current_question;
+    if (!q) return await ensureQuestion(user, false);
+    updateProgression(m, "solution");
 
-*What do you need right now?*
+    const canSendImages = Boolean(process.env.MANYCHAT_API_TOKEN);
+    let note = "";
 
-1️⃣ 📝 Topic Practice Questions
-2️⃣ 📚 Homework Help 🫶 ⚡  
-3️⃣ 🧮 Tips & Hacks
+    if (
+      q.hasSolutionLatex &&
+      q.solutionLatexImage &&
+      q.solutionLatexImage.data &&
+      q.solutionLatexImage.format
+    ) {
+      const imageId = crypto
+        .createHash("md5")
+        .update(q.solutionLatexImage.data)
+        .digest("hex");
+      if (wasImageRecentlySent(user.id, imageId)) {
+        note = "\n\n[equation shown in previous image]";
+      } else {
+        note = canSendImages
+          ? "\n\n[equation sent as image]"
+          : "\n\n[equation detected]";
+        if (canSendImages) {
+          setImmediate(async () => {
+            try {
+              console.log(
+                `📤 Queue Solution LaTeX send → channel=${
+                  process.env.MANYCHAT_CHANNEL || "whatsapp"
+                }, format=${q.solutionLatexImage.format}`
+              );
+              await sendImageViaManyChat(
+                user.id,
+                q.solutionLatexImage,
+                `Q${m.q_index} Solution`
+              );
+            } catch (e) {
+              console.error(
+                "❌ Failed to send solution formula image:",
+                e.message
+              );
+            }
+          });
+        }
+      }
+    }
 
-Just pick a number! ✨`;
-  }
-
-  if (wantsChangeTopic(t)) {
-    const capsTopics = listTopicsCAPS(m.subject, m.grade) || [];
-    const topics =
-      capsTopics.length > 0
-        ? capsTopics.slice(0, 10)
-        : listTopicsFallback(m.subject).slice(0, 10);
-
-    m._topics = topics;
-    m._topics_from_caps = capsTopics.length > 0;
-    m.stage = "topic_select";
-
-    const list = formatEmojiNumberedList(topics.map((x) => labelize(x)));
-    const content = `Okay, pick a CAPS-aligned topic:\n\n${list}`;
+    const content = `${header(user)}\n\n🧩 **Solution (steps):**\n\n${
+      q.solution || "Solution available after attempt."
+    }${note}`;
     return formatResponseWithEnhancedSeparation(
       content,
-      `Reply with a number (e.g., 1)`,
+      MENU,
       user.preferences.device_type
     );
   }
@@ -608,6 +637,29 @@ function listSubtopicsFallback(subject, topicKey) {
 }
 
 // Main handler
+
+
+// Flow screens
+async function screenStart(user) {
+  user.current_menu = "exam_prep_conversation";
+  user.context = user.context || {};
+  user.context.examTopicPractice = {
+    stage: "subject_grade",
+    progression: 0,
+    q_index: 0,
+    current_question: null,
+  };
+  const content =
+    `📝 **Topic Practice**\nUnlimited practice to master any topic.\n\n` +
+    `What subject and grade?\nExamples: "Mathematics 10", "Physical Sciences 11", "Geography 9"`;
+  const menu = `Reply: Subject + Grade (e.g., "Mathematics 10")`;
+  return formatResponseWithEnhancedSeparation(
+    content,
+    menu,
+    user.preferences.device_type
+  );
+}
+
 module.exports = async (req, res) => {
   try {
     const manyCompatRes = new ManyCompatResponse(res);
@@ -664,7 +716,6 @@ module.exports = async (req, res) => {
     });
 
     persistUserState(subscriberId, user).catch(() => {});
-
     analyticsModule
       .trackEvent(subscriberId, "exam_topic_practice", {
         stage: user.context.examTopicPractice?.stage || "unknown",
@@ -693,24 +744,3 @@ module.exports = async (req, res) => {
     });
   }
 };
-
-// Flow screens
-async function screenStart(user) {
-  user.current_menu = "exam_prep_conversation";
-  user.context = user.context || {};
-  user.context.examTopicPractice = {
-    stage: "subject_grade",
-    progression: 0,
-    q_index: 0,
-    current_question: null,
-  };
-  const content =
-    `📝 **Topic Practice**\nUnlimited practice to master any topic.\n\n` +
-    `What subject and grade?\nExamples: "Mathematics 10", "Physical Sciences 11", "Geography 9"`;
-  const menu = `Reply: Subject + Grade (e.g., "Mathematics 10")`;
-  return formatResponseWithEnhancedSeparation(
-    content,
-    menu,
-    user.preferences.device_type
-  );
-}
