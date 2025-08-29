@@ -443,18 +443,20 @@ async function formatEnhancedQuestionResponse(user) {
         )}.png [image/png]`
       );
 
-      setImmediate(async () => {
-        try {
-          await sendImageViaManyChat(
-            user.id,
-            q.tableImage,
-            `Q${m.q_index} Table`
-          );
-          console.log(`📊 Table image sent successfully`);
-        } catch (e) {
-          console.error("❌ Failed to send table image:", e.message);
+      try {
+        const sendResult = await sendImageViaManyChat(
+          user.id,
+          q.latexImage,
+          `Q${m.q_index} Equation`
+        );
+        if (sendResult.success) {
+          console.log(`🧮 LaTeX image sent successfully`);
+        } else {
+          console.log(`🧮 LaTeX image send failed: ${sendResult.error}`);
         }
-      });
+      } catch (e) {
+        console.error("❌ Failed to send equation image:", e.message);
+      }
     }
   }
   // Priority 2: Graphs
