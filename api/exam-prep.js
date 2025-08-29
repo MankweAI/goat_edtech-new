@@ -2,13 +2,12 @@
 /**
  * Exam/Test Help → Topic Practice
  * GOAT Bot 2.0
- * Updated: 2025-08-29 11:40:00 UTC
+ * Updated: 2025-08-29 12:40:00 UTC
  * Developer: DithetoMokgabudi
  *
  * Change:
- * - Make media sending synchronous in serverless (await ManyChat send before responding).
- *   setImmediate tasks can be killed when the function returns.
- * - Only claim "[... sent as image]" after a successful send; otherwise show "[... detected]".
+ * - Respect ManyChat media circuit breaker to avoid long timeouts blocking replies.
+ * - Keep synchronous media attempt but cap via media utility (fast fallback to text-only note).
  */
 
 const crypto = require("crypto");
@@ -35,6 +34,7 @@ const analyticsModule = require("../lib/utils/analytics");
 const {
   sendImageViaManyChat,
   wasImageRecentlySent,
+  isMediaCircuitOpen,
 } = require("../lib/utils/whatsapp-image");
 
 // Mastery-focused menu (consistent numbering)
@@ -205,7 +205,8 @@ async function ensureQuestion(user, regenerate = false) {
   const title = headerTitleOnly(user);
   const qTitle = questionBanner(m.q_index);
 
-  const canSendImages = Boolean(process.env.MANYCHAT_API_TOKEN);
+  const canSendImages =
+    Boolean(process.env.MANYCHAT_API_TOKEN) && !isMediaCircuitOpen();
   let note = "";
 
   // Priority 1: Graph
@@ -432,7 +433,8 @@ Just pick a number! ✨`;
     if (!q) return await ensureQuestion(user, false);
     updateProgression(m, "solution");
 
-    const canSendImages = Boolean(process.env.MANYCHAT_API_TOKEN);
+    const canSendImages =
+      Boolean(process.env.MANYCHAT_API_TOKEN) && !isMediaCircuitOpen();
     let note = "";
 
     if (
