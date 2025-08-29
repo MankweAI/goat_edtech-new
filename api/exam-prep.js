@@ -2,12 +2,13 @@
 /**
  * Exam/Test Help → Topic Practice
  * GOAT Bot 2.0
- * Updated: 2025-08-29 12:40:00 UTC
+ * Updated: 2025-08-29 12:58:00 UTC
  * Developer: DithetoMokgabudi
  *
- * Change:
- * - Respect ManyChat media circuit breaker to avoid long timeouts blocking replies.
- * - Keep synchronous media attempt but cap via media utility (fast fallback to text-only note).
+ * Changes (bugfix):
+ * - Ensure Next question actually regenerates a different item (light de-dup with retry).
+ * - Ensure View solution never re-sends the question screen when current_question is missing.
+ * - Keep media circuit breaker behaviour intact.
  */
 
 const crypto = require("crypto");
@@ -173,12 +174,21 @@ function wantsExit(text) {
   return /menu|main|^7$/.test((text || "").toLowerCase());
 }
 
-// Question generation
-async function ensureQuestion(user, regenerate = false) {
+function normalizeText(s = "") {
+  return (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+// Ensure a question object exists in state, optionally regenerate with de-dup
+async function ensureQuestionObject(user, regenerate = false) {
   const m = user.context.examTopicPractice;
+  const prev = m.current_question || null;
+  const prevTextNorm = prev ? normalizeText(prev.questionText || "") : null;
+
   if (!m.current_question || regenerate) {
     const diff = getDifficulty(m.progression || 0);
-    const profile = {
+
+    // Base profile
+    let profile = {
       grade: m.grade || 10,
       subject: m.subject || "Mathematics",
       topic_struggles: m.topic || "algebra",
@@ -186,22 +196,61 @@ async function ensureQuestion(user, regenerate = false) {
       difficulty: diff.key,
       assessment_type: "practice",
     };
-    const result = await generateExamQuestions(profile, 1, user.id);
-    const q = result?.questions?.[0] || {
-      questionText: `Practice: Master ${
-        m.subtopic || m.topic
-      }\n\nSolve: 2x + 5 = 15`,
-      solution:
-        "**Step 1:** 2x = 10\n**Step 2:** x = 5\n**Mastery Check:** Try 3x + 7 = 22.",
-      source: "fallback",
-      contentId: `fb_${Date.now()}`,
-    };
+
+    // Attempt 1
+    let result = await generateExamQuestions(profile, 1, user.id);
+    let q = result?.questions?.[0];
+
+    // If duplicate to previous question text, try one more variation
+    if (
+      prevTextNorm &&
+      q &&
+      normalizeText(q.questionText || "") === prevTextNorm
+    ) {
+      try {
+        profile = {
+          ...profile,
+          specific_failure: `${profile.specific_failure} (variation ${
+            Date.now() % 1000
+          })`,
+        };
+        const retry = await generateExamQuestions(profile, 1, user.id);
+        if (retry?.questions?.[0]) {
+          q = retry.questions[0];
+        }
+      } catch (_) {
+        // ignore and keep original q
+      }
+    }
+
+    if (!q) {
+      q = result?.questions?.[0] || {
+        questionText: `Practice: Master ${
+          m.subtopic || m.topic
+        }\n\nSolve: 2x + 5 = 15`,
+        solution:
+          "**Step 1:** 2x = 10\n**Step 2:** x = 5\n**Mastery Check:** Try 3x + 7 = 22.",
+        source: "fallback",
+        contentId: `fb_${Date.now()}`,
+      };
+    }
+
+    // Commit once
     m.current_question = q;
     m.q_index = (m.q_index || 0) + 1;
     m.lastHelpUsed = false;
   }
 
-  const q = m.current_question;
+  return m.current_question;
+}
+
+// Question generation + optional image sending
+async function ensureQuestion(user, regenerate = false) {
+  const m = user.context.examTopicPractice;
+
+  // Ensure we have a fresh question object (with de-dup)
+  const q = await ensureQuestionObject(user, regenerate);
+
   const title = headerTitleOnly(user);
   const qTitle = questionBanner(m.q_index);
 
@@ -429,8 +478,11 @@ Just pick a number! ✨`;
   }
 
   if (wantsSolution(t)) {
+    // Ensure a question exists; DO NOT return question screen here.
+    if (!m.current_question) {
+      await ensureQuestionObject(user, false);
+    }
     const q = m.current_question;
-    if (!q) return await ensureQuestion(user, false);
     updateProgression(m, "solution");
 
     const canSendImages =
@@ -483,8 +535,11 @@ Just pick a number! ✨`;
   }
 
   if (wantsHint(t)) {
+    // Ensure a question exists
+    if (!m.current_question) {
+      await ensureQuestionObject(user, false);
+    }
     const q = m.current_question;
-    if (!q) return await ensureQuestion(user, false);
     updateProgression(m, "hint");
     const hint = firstHint(q.solution);
     const content = `${header(user)}\n\n💡 **Hint:** ${hint}`;
