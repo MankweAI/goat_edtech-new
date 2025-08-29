@@ -422,9 +422,9 @@ async function formatEnhancedQuestionResponse(user) {
   let note = "";
   let textContent = q.questionText;
 
-  // Enhanced Content Complexity Priority System - AUTOMATIC HYBRID RESPONSE
   console.log(`📤 SENDING → channel=whatsapp, format=hybrid`);
 
+  // FIXED: Make all image sending synchronous with proper error handling
   // Priority 1: Complex Tables/Matrices
   if (q.hasComplexTable && q.tableImage && canSendImages) {
     const imageId = crypto
@@ -437,25 +437,24 @@ async function formatEnhancedQuestionResponse(user) {
     } else {
       note = "\n\n[table sent as image]";
       console.log(
-        `📤 Sending table via ManyChat channel=whatsapp → ${imageId.substring(
-          0,
-          8
-        )}.png [image/png]`
+        `📤 Sending table via ManyChat → ${imageId.substring(0, 8)}.png`
       );
 
       try {
         const sendResult = await sendImageViaManyChat(
           user.id,
-          q.latexImage,
-          `Q${m.q_index} Equation`
+          q.tableImage, // ✅ FIXED: Use correct image variable
+          `Q${m.q_index} Table`
         );
         if (sendResult.success) {
-          console.log(`🧮 LaTeX image sent successfully`);
+          console.log(`📊 Table image sent successfully`);
         } else {
-          console.log(`🧮 LaTeX image send failed: ${sendResult.error}`);
+          console.log(`📊 Table image send failed: ${sendResult.error}`);
+          note = "\n\n[table detected - image failed]";
         }
       } catch (e) {
-        console.error("❌ Failed to send equation image:", e.message);
+        console.error("❌ Failed to send table image:", e.message);
+        note = "\n\n[table detected - image failed]";
       }
     }
   }
@@ -471,24 +470,25 @@ async function formatEnhancedQuestionResponse(user) {
     } else {
       note = "\n\n[graph sent as image]";
       console.log(
-        `📤 Sending graph via ManyChat channel=whatsapp → ${imageId.substring(
-          0,
-          8
-        )}.png [image/png]`
+        `📤 Sending graph via ManyChat → ${imageId.substring(0, 8)}.png`
       );
 
-      setImmediate(async () => {
-        try {
-          await sendImageViaManyChat(
-            user.id,
-            q.graphImage,
-            `Q${m.q_index} Graph`
-          );
+      try {
+        const sendResult = await sendImageViaManyChat(
+          user.id,
+          q.graphImage, // ✅ FIXED: Use correct image variable
+          `Q${m.q_index} Graph`
+        );
+        if (sendResult.success) {
           console.log(`📈 Graph image sent successfully`);
-        } catch (e) {
-          console.error("❌ Failed to send graph image:", e.message);
+        } else {
+          console.log(`📈 Graph image send failed: ${sendResult.error}`);
+          note = "\n\n[graph detected - image failed]";
         }
-      });
+      } catch (e) {
+        console.error("❌ Failed to send graph image:", e.message);
+        note = "\n\n[graph detected - image failed]";
+      }
     }
   }
   // Priority 3: Complex Math (LaTeX)
@@ -503,29 +503,29 @@ async function formatEnhancedQuestionResponse(user) {
     } else {
       note = "\n\n[equation sent as image]";
       console.log(
-        `📤 Sending LaTeX via ManyChat channel=whatsapp → ${imageId.substring(
-          0,
-          8
-        )}.png [image/png]`
+        `📤 Sending LaTeX via ManyChat → ${imageId.substring(0, 8)}.png`
       );
 
-      setImmediate(async () => {
-        try {
-          await sendImageViaManyChat(
-            user.id,
-            q.latexImage,
-            `Q${m.q_index} Equation`
-          );
+      try {
+        const sendResult = await sendImageViaManyChat(
+          user.id,
+          q.latexImage, // ✅ FIXED: Use correct image variable
+          `Q${m.q_index} Equation`
+        );
+        if (sendResult.success) {
           console.log(`🧮 LaTeX image sent successfully`);
-        } catch (e) {
-          console.error("❌ Failed to send equation image:", e.message);
+        } else {
+          console.log(`🧮 LaTeX image send failed: ${sendResult.error}`);
+          note = "\n\n[equation detected - image failed]";
         }
-      });
+      } catch (e) {
+        console.error("❌ Failed to send equation image:", e.message);
+        note = "\n\n[equation detected - image failed]";
+      }
     }
   }
   // Priority 4: Enhanced Unicode (no image needed)
   else if (q.hasSimpleUnicode) {
-    // Text is already enhanced with Unicode symbols
     note = "";
     console.log(`✨ Unicode-enhanced text delivered`);
   }
@@ -538,9 +538,7 @@ async function formatEnhancedQuestionResponse(user) {
 
   const content = `${title}\n\n${qTitle}\n\n${textContent}${note}`;
 
-  console.log(
-    `🔄 Sending formatted response: {"message":"${content.substring(0, 50)}...`
-  );
+  console.log(`🔄 Response ready: ${content.substring(0, 50)}...`);
 
   return formatResponseWithEnhancedSeparation(
     content,
@@ -548,6 +546,7 @@ async function formatEnhancedQuestionResponse(user) {
     user.preferences.device_type
   );
 }
+
 
 // Enhanced Solution Display with complexity analysis
 async function handleEnhancedSolution(user) {
@@ -580,18 +579,22 @@ async function handleEnhancedSolution(user) {
         )}.png`
       );
 
-      setImmediate(async () => {
-        try {
-          await sendImageViaManyChat(
-            user.id,
-            q.solutionTableImage,
-            `Q${m.q_index} Solution Table`
-          );
+      try {
+        const sendResult = await sendImageViaManyChat(
+          user.id,
+          q.solutionTableImage,
+          `Q${m.q_index} Solution Table`
+        );
+        if (sendResult.success) {
           console.log(`📊 Solution table sent successfully`);
-        } catch (e) {
-          console.error("❌ Failed to send solution table image:", e.message);
+        } else {
+          console.log(`📊 Solution table send failed: ${sendResult.error}`);
+          note = "\n\n[solution table detected - image failed]";
         }
-      });
+      } catch (e) {
+        console.error("❌ Failed to send solution table image:", e.message);
+        note = "\n\n[solution table detected - image failed]";
+      }
     }
   } else if (q.hasSolutionLatex && q.solutionLatexImage && canSendImages) {
     const imageId = crypto
@@ -610,21 +613,22 @@ async function handleEnhancedSolution(user) {
         )}.png`
       );
 
-      setImmediate(async () => {
-        try {
-          await sendImageViaManyChat(
-            user.id,
-            q.solutionLatexImage,
-            `Q${m.q_index} Solution`
-          );
+      try {
+        const sendResult = await sendImageViaManyChat(
+          user.id,
+          q.solutionLatexImage,
+          `Q${m.q_index} Solution`
+        );
+        if (sendResult.success) {
           console.log(`🧮 Solution LaTeX sent successfully`);
-        } catch (e) {
-          console.error(
-            "❌ Failed to send solution equation image:",
-            e.message
-          );
+        } else {
+          console.log(`🧮 Solution LaTeX send failed: ${sendResult.error}`);
+          note = "\n\n[solution equation detected - image failed]";
         }
-      });
+      } catch (e) {
+        console.error("❌ Failed to send solution equation image:", e.message);
+        note = "\n\n[solution equation detected - image failed]";
+      }
     }
   } else if (!canSendImages) {
     if (q.hasSolutionTable) note = "\n\n[solution table detected]";
@@ -641,7 +645,6 @@ async function handleEnhancedSolution(user) {
     user.preferences.device_type
   );
 }
-
 // Enhanced Hint Display
 function firstHint(solution = "") {
   if (!solution)
