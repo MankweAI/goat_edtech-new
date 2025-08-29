@@ -642,7 +642,7 @@ module.exports = async (req, res) => {
       message:
         "Sorry, I encountered an error with Topic Practice. Please try again.",
       status: "error",
-      echo: "Sorry, I encountered an error with Topic Practice. Please try again.",
+      echo: "Sorry, I encountered an error with Topic Practice. Please try again..",
       error: error.message,
     });
   }
